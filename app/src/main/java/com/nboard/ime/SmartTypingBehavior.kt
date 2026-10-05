@@ -3,11 +3,14 @@ package com.nboard.ime
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 
-class SmartTypingBehavior(private val inputType: Int) {
-    constructor(editorInfo: EditorInfo?) : this(editorInfo?.inputType ?: 0)
+class SmartTypingBehavior(private val inputType: Int, private val imeOptions: Int = 0) {
+    constructor(editorInfo: EditorInfo?) : this(editorInfo?.inputType ?: 0, editorInfo?.imeOptions ?: 0)
 
     private val inputClass: Int = inputType and InputType.TYPE_MASK_CLASS
     private val variation: Int = inputType and InputType.TYPE_MASK_VARIATION
+
+    fun shouldPersonalize(): Boolean = inputClass == InputType.TYPE_CLASS_TEXT &&
+        !isPasswordField() && imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING == 0
 
     fun shouldAutoSpaceAndCapitalize(): Boolean {
         if (inputClass != InputType.TYPE_CLASS_TEXT) {

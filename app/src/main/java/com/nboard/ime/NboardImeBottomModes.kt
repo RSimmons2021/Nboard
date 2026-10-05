@@ -111,9 +111,10 @@ internal fun NboardImeService.toggleClipboardMode() {
     refreshUi()
 }
 
-internal fun NboardImeService.refreshUi() {
+internal fun NboardImeService.refreshUi(beforeCursor: String? = null) {
+    val context = beforeCursor ?: readKeyboardContext()
     renderRecentClipboardRow()
-    renderPredictionRow()
+    renderPredictionRow(context)
     renderEmojiSuggestions()
     if (isVoiceListening && !isVoiceInputLongPressAvailable()) {
         stopVoiceInput(forceCancel = true)
@@ -126,14 +127,17 @@ internal fun NboardImeService.refreshUi() {
         setGenerating(false)
     }
 
-    refreshAutoShiftFromContext()
+    refreshAutoShiftFromContext(context)
     refreshGboardPunctuationLabels()
     setVisibleAnimated(aiQuickActionsRow, isAiMode)
     setVisibleAnimated(aiPromptRow, isAiMode)
     setVisibleAnimated(clipboardPanel, isClipboardOpen && !isEmojiMode)
     setVisibleAnimated(emojiPanel, isEmojiMode)
     setVisibleAnimated(recentClipboardRow, shouldShowRecentClipboardRow())
-    setVisibleAnimated(predictionRow, shouldShowPredictionRow() && hasPredictionSuggestions)
+    // Prediction updates animate glyphs in Compose, not the whole strip.
+    predictionRow.isVisible = shouldShowPredictionRow() && hasPredictionSuggestions
+    toolbarActionsRow.isVisible = !predictionRow.isVisible
+    toolbarToggleButton.rotation = if (isToolbarOpen) 180f else 0f
     setVisibleAnimated(keyRowsContainer, !isClipboardOpen && (!isEmojiMode || isEmojiSearchMode))
 
     val gboardLayout = isGboardLayoutActive()
@@ -198,6 +202,7 @@ internal fun NboardImeService.refreshUi() {
     aiExpandButton.isEnabled = aiAllowed && !isGenerating
 
     setGenerating(isGenerating)
+    updateAiPreviewUi()
 }
 
 internal fun NboardImeService.applyBottomRowLayoutForClipboard(clipboardOpen: Boolean) {
@@ -365,6 +370,7 @@ internal fun NboardImeService.setGenerating(generating: Boolean) {
     recentClipboardChevronButton.isEnabled = !generating
     syncAiProcessingAnimations()
     syncVoiceInputGlowAnimation()
+    updateAiPreviewUi()
 }
 
 internal fun NboardImeService.setVisibleAnimated(view: View, visible: Boolean) {

@@ -7,13 +7,15 @@
 
     <application
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_launcher_logo"
         android:roundIcon="@drawable/ic_launcher_logo"
         android:label="Nboard"
         android:supportsRtl="true"
         android:theme="@style/Theme.Nboard">
         <activity
-            android:name=".MainActivity"
+            android:name=".SettingsActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -22,6 +24,10 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".ChatGptSignInActivity" android:exported="false" android:configChanges="orientation|screenSize" />
+        <activity android:name=".KeyboardTestActivity" android:exported="false" />
+        <activity android:name=".MainActivity" android:exported="false" />
+        <activity android:name=".ClipboardSettingsActivity" android:exported="false" />
         <activity
             android:name=".OnboardingActivity"
             android:exported="false" />

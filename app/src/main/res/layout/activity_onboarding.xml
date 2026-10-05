@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="?attr/colorKeyboardBg">
@@ -71,7 +72,7 @@
                 android:contentDescription="Back"
                 android:padding="9dp"
                 android:src="@drawable/ic_chevron_left_lucide"
-                android:tint="?android:attr/textColorPrimary" />
+                app:tint="?android:attr/textColorPrimary" />
 
             <TextView
                 android:id="@+id/onboardingTopTitle"
@@ -175,7 +176,7 @@
                         android:layout_height="18dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_external_link_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
 
                 <View
@@ -207,7 +208,7 @@
                         android:layout_height="18dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_external_link_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
 
                 <View
@@ -251,7 +252,7 @@
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_chevron_down_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -304,7 +305,7 @@
                         android:layout_height="18dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_ai_custom"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
 
                     <TextView
                         android:layout_width="0dp"
@@ -333,7 +334,7 @@
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_chevron_down_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
 
                 <View
@@ -447,7 +448,7 @@
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_chevron_down_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
 
                 <View
@@ -510,7 +511,7 @@
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_chevron_down_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
 
                 <View
@@ -573,7 +574,7 @@
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_chevron_down_lucide"
-                        android:tint="?android:attr/textColorPrimary" />
+                        app:tint="?android:attr/textColorPrimary" />
                 </LinearLayout>
 
                 <View
@@ -644,7 +645,7 @@
                     android:contentDescription="Next"
                     android:padding="16dp"
                     android:src="@drawable/ic_arrow_right_lucide"
-                    android:tint="@color/ai_text" />
+                    app:tint="@color/ai_text" />
             </FrameLayout>
         </LinearLayout>
     </FrameLayout>

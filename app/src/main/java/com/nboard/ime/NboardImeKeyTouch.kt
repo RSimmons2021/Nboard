@@ -1,7 +1,9 @@
 package com.nboard.ime
 
 import android.os.Build
+import android.media.AudioAttributes
 import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -22,7 +24,7 @@ data class HapticEffectSpec(
 
 internal fun hapticEffectSpec(mode: HapticMode): HapticEffectSpec? {
     return when (mode) {
-        HapticMode.LIGHT -> HapticEffectSpec(6L, 60)
+        HapticMode.LIGHT -> HapticEffectSpec(8L, 80)
         HapticMode.MEDIUM -> HapticEffectSpec(10L, 120)
         HapticMode.STRONG -> HapticEffectSpec(16L, 200)
         HapticMode.OFF,
@@ -223,6 +225,10 @@ internal fun NboardImeService.configureKeyTouch(
                     .setDuration(KEY_PRESS_ANIM_MS)
                     .start()
                 performKeyHaptic(touchedView)
+                if (swipeToken != null && touchedView is TextView) {
+                    keyPressPreview.show(touchedView, touchedView.text.toString())
+                }
+
 
                 if (repeatOnHold) {
                     onTap()
@@ -238,6 +244,7 @@ internal fun NboardImeService.configureKeyTouch(
                         onTap()
                     }
                     longPressRunnable = Runnable {
+                        keyPressPreview.hide(touchedView)
                         longPressTriggered = true
                         swipeActiveForThisPointer = false
                         cancelSwipeTyping()
@@ -260,6 +267,7 @@ internal fun NboardImeService.configureKeyTouch(
                 if (swipeActiveForThisPointer) {
                     val isSwipingNow = updateSwipeTyping(currentRawX, currentRawY)
                     if (isSwipingNow) {
+                        keyPressPreview.hide(touchedView)
                         longPressRunnable?.let { touchedView.removeCallbacks(it) }
                         longPressRunnable = null
                     }
@@ -281,6 +289,7 @@ internal fun NboardImeService.configureKeyTouch(
             }
 
             MotionEvent.ACTION_UP -> {
+                keyPressPreview.hide(touchedView)
                 touchedView.isPressed = false
                 touchedView.alpha = baseAlpha
                 touchedView.animate().cancel()
@@ -322,6 +331,7 @@ internal fun NboardImeService.configureKeyTouch(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                keyPressPreview.hide(touchedView)
                 touchedView.isPressed = false
                 touchedView.alpha = baseAlpha
                 touchedView.animate().cancel()
@@ -358,7 +368,12 @@ internal fun NboardImeService.configureKeyTouch(
 }
 
 internal fun NboardImeService.performKeyHaptic(view: View) {
-    when (hapticMode) {
+    performKeyboardHaptic(view, hapticMode, vibrator)
+}
+
+/** Shared by typing and the settings strength preview. */
+internal fun performKeyboardHaptic(view: View, mode: HapticMode, deviceVibrator: Vibrator?) {
+    when (mode) {
         HapticMode.OFF -> return
         HapticMode.SYSTEM -> {
             view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -367,12 +382,14 @@ internal fun NboardImeService.performKeyHaptic(view: View) {
         else -> Unit
     }
 
-    val effect = hapticEffectSpec(hapticMode) ?: return
+    val effect = hapticEffectSpec(mode) ?: return
     try {
-        val deviceVibrator = vibrator
         if (deviceVibrator?.hasVibrator() == true) {
             deviceVibrator.vibrate(
-                VibrationEffect.createOneShot(effect.durationMs, effect.amplitude)
+                VibrationEffect.createOneShot(effect.durationMs,
+                    if (deviceVibrator.hasAmplitudeControl()) effect.amplitude else VibrationEffect.DEFAULT_AMPLITUDE),
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
             )
         }
     } catch (_: Exception) {
@@ -408,7 +425,7 @@ internal fun NboardImeService.addSpecialKey(
             flattenView(this)
         }
     } else {
-        AppCompatButton(this).apply {
+        NumberHintButton(this).apply {
             text = label.orEmpty()
             textSize = textSizeSp
             if (useSerifTypeface) {

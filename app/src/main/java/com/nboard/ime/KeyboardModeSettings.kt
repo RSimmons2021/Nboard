@@ -47,7 +47,8 @@ enum class KeyboardFontMode(val value: String) {
 enum class AiProvider(val value: String) {
     GEMINI("gemini"),
     ANTHROPIC("anthropic"),
-    OPENAI_COMPATIBLE("openai_compatible")
+    OPENAI_COMPATIBLE("openai_compatible"),
+    CHATGPT("chatgpt")
 }
 
 enum class GeminiModel(val modelId: String, val displayName: String) {
@@ -131,6 +132,22 @@ internal fun resolveLanguageProfileDisplayName(
 }
 
 object KeyboardModeSettings {
+    fun loadClipboardHistoryEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("clipboard_history_enabled", true)
+
+    fun saveClipboardHistoryEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("clipboard_history_enabled", enabled).apply()
+    }
+
+    fun loadPredictionMotionEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("prediction_motion_enabled", true)
+
+    fun savePredictionMotionEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putBoolean("prediction_motion_enabled", enabled).apply()
+    }
     const val PREFS_NAME = "nboard_settings"
     private const val KEY_LEFT_MODE = "left_bottom_mode"
     private const val KEY_RIGHT_MODE = "right_bottom_mode"
@@ -271,7 +288,7 @@ object KeyboardModeSettings {
 
     fun loadLayoutMode(context: Context): KeyboardLayoutMode {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_LAYOUT_MODE, KeyboardLayoutMode.AZERTY.value)
+            .getString(KEY_LAYOUT_MODE, KeyboardLayoutMode.GBOARD_QWERTY.value)
         return when (raw) {
             KeyboardLayoutMode.QWERTY.value -> KeyboardLayoutMode.QWERTY
             KeyboardLayoutMode.GBOARD_AZERTY.value -> KeyboardLayoutMode.GBOARD_AZERTY
@@ -320,7 +337,7 @@ object KeyboardModeSettings {
 
     fun loadLanguageMode(context: Context): KeyboardLanguageMode {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_LANGUAGE_MODE, KeyboardLanguageMode.FRENCH.value)
+            .getString(KEY_LANGUAGE_MODE, KeyboardLanguageMode.ENGLISH.value)
         return when (raw) {
             KeyboardLanguageMode.ENGLISH.value -> KeyboardLanguageMode.ENGLISH
             KeyboardLanguageMode.BOTH.value -> KeyboardLanguageMode.BOTH
@@ -356,6 +373,7 @@ object KeyboardModeSettings {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(KEY_AI_PROVIDER, AiProvider.GEMINI.value)
         ) {
+            AiProvider.CHATGPT.value -> AiProvider.CHATGPT
             AiProvider.ANTHROPIC.value -> AiProvider.ANTHROPIC
             AiProvider.OPENAI_COMPATIBLE.value -> AiProvider.OPENAI_COMPATIBLE
             else -> AiProvider.GEMINI
@@ -459,8 +477,8 @@ object KeyboardModeSettings {
 
     fun loadHapticMode(context: Context): HapticMode {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_HAPTIC_MODE, HapticMode.SYSTEM.value)
-        return HapticMode.entries.firstOrNull { it.value == raw } ?: HapticMode.SYSTEM
+            .getString(KEY_HAPTIC_MODE, HapticMode.LIGHT.value)
+        return HapticMode.entries.firstOrNull { it.value == raw } ?: HapticMode.LIGHT
     }
 
     fun saveHapticMode(context: Context, mode: HapticMode) {
@@ -827,8 +845,8 @@ object KeyboardModeSettings {
         prefs: android.content.SharedPreferences,
         isLeftSlot: Boolean
     ): Pair<BottomKeyMode, BottomKeyMode> {
-        val defaultFirst = if (isLeftSlot) BottomKeyMode.AI else BottomKeyMode.CLIPBOARD
-        val defaultSecond = BottomKeyMode.EMOJI
+        val defaultFirst = if (isLeftSlot) BottomKeyMode.EMOJI else BottomKeyMode.CLIPBOARD
+        val defaultSecond = if (isLeftSlot) BottomKeyMode.AI else BottomKeyMode.EMOJI
         val primaryKey = if (isLeftSlot) KEY_LEFT_OPTION_PRIMARY else KEY_RIGHT_OPTION_PRIMARY
         val secondaryKey = if (isLeftSlot) KEY_LEFT_OPTION_SECONDARY else KEY_RIGHT_OPTION_SECONDARY
 
@@ -916,8 +934,8 @@ object KeyboardModeSettings {
         slot: LanguageProfileSlot,
         isLeftSlot: Boolean
     ): Pair<BottomKeyMode, BottomKeyMode> {
-        val defaultFirst = if (isLeftSlot) BottomKeyMode.AI else BottomKeyMode.CLIPBOARD
-        val defaultSecond = BottomKeyMode.EMOJI
+        val defaultFirst = if (isLeftSlot) BottomKeyMode.EMOJI else BottomKeyMode.CLIPBOARD
+        val defaultSecond = if (isLeftSlot) BottomKeyMode.AI else BottomKeyMode.EMOJI
         return normalizeOptionPair(
             parseBottomKeyMode(
                 prefs.getString(profileBottomOptionKey(slot, isLeftSlot, true), null),

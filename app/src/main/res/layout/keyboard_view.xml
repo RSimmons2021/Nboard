@@ -139,6 +139,39 @@
     </FrameLayout>
 
     <LinearLayout
+        android:id="@+id/aiPreviewPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone">
+        <ScrollView android:layout_width="match_parent" android:layout_height="100dp">
+            <TextView android:id="@+id/aiPreviewText"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:padding="8dp" android:textSize="14sp" android:textColor="?attr/colorKeyText"
+                android:accessibilityLiveRegion="polite" />
+        </ScrollView>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal">
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/aiPreviewApply"
+                android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                android:background="@drawable/bg_special_key" android:textColor="?attr/colorKeyText"
+                android:text="Apply" android:textAllCaps="false" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/aiPreviewDiscard"
+                android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                android:background="@drawable/bg_special_key" android:textColor="?attr/colorKeyText"
+                android:text="Discard" android:textAllCaps="false" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/aiPreviewStop"
+                android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                android:background="@drawable/bg_special_key" android:textColor="?attr/colorKeyText"
+                android:text="Stop" android:textAllCaps="false" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/aiPreviewUndo"
+                android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                android:background="@drawable/bg_special_key" android:textColor="?attr/colorKeyText"
+                android:text="Undo" android:textAllCaps="false" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/clipboardPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -146,11 +179,23 @@
         android:orientation="vertical"
         android:visibility="gone">
 
-        <LinearLayout
-            android:id="@+id/clipboardItemsContainer"
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical" />
+            android:padding="8dp"
+            android:text="Tap to paste · hold to pin or delete"
+            android:textSize="12sp"
+            android:textColor="?attr/colorKeyText" />
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="216dp"
+            android:fillViewport="true">
+            <LinearLayout
+                android:id="@+id/clipboardItemsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
     </LinearLayout>
 
     <LinearLayout
@@ -314,73 +359,72 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/predictionRow"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:layout_marginBottom="8dp"
+        android:layout_height="48dp"
+        android:layout_marginBottom="4dp"
         android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:visibility="gone">
-
-        <androidx.appcompat.widget.AppCompatButton
-            android:id="@+id/predictionWord1Button"
+        android:orientation="horizontal">
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/toolbarToggleButton"
+            android:layout_width="40dp"
+            android:layout_height="48dp"
+            android:background="@android:color/transparent"
+            android:contentDescription="Keyboard tools"
+            android:src="@drawable/ic_chevron_right_lucide"
+            android:tint="?attr/colorKeyText" />
+        <FrameLayout
             android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_chip"
-            android:fontFamily="@font/inter_variable"
-            android:gravity="center"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:textAllCaps="false"
-            android:textColor="?attr/colorKeyText"
-            android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/predictionSeparator1"
-            android:layout_width="18dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="|"
-            android:textColor="?attr/colorKeyText"
-            android:textSize="15sp" />
-
-        <androidx.appcompat.widget.AppCompatButton
-            android:id="@+id/predictionWord2Button"
-            android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_chip"
-            android:fontFamily="@font/inter_variable"
-            android:gravity="center"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:textAllCaps="false"
-            android:textColor="?attr/colorKeyText"
-            android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/predictionSeparator2"
-            android:layout_width="18dp"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="|"
-            android:textColor="?attr/colorKeyText"
-            android:textSize="15sp" />
-
-        <androidx.appcompat.widget.AppCompatButton
-            android:id="@+id/predictionWord3Button"
-            android:layout_width="0dp"
-            android:layout_height="34dp"
-            android:layout_weight="1"
-            android:background="@drawable/bg_chip"
-            android:fontFamily="@font/inter_variable"
-            android:gravity="center"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:textAllCaps="false"
-            android:textColor="?attr/colorKeyText"
-            android:textSize="13sp" />
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <com.nboard.ime.PredictionStripView
+                android:id="@+id/predictionRow"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+            <LinearLayout
+                android:id="@+id/toolbarActionsRow"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <androidx.appcompat.widget.AppCompatImageButton
+                    android:id="@+id/toolbarClipboardButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Clipboard"
+                    android:src="@drawable/ic_clipboard_lucide"
+                    android:tint="?attr/colorKeyText" />
+                <androidx.appcompat.widget.AppCompatImageButton
+                    android:id="@+id/toolbarSettingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Keyboard settings"
+                    android:src="@drawable/ic_wrench_lucide"
+                    android:tint="?attr/colorKeyText" />
+                <androidx.appcompat.widget.AppCompatImageButton
+                    android:id="@+id/toolbarAiButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="AI assistance"
+                    android:src="@drawable/ic_ai_custom"
+                    android:tint="?attr/colorKeyText" />
+                <androidx.appcompat.widget.AppCompatImageButton
+                    android:id="@+id/toolbarCloseButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Return to typing"
+                    android:src="@drawable/ic_key_lucide"
+                    android:tint="?attr/colorKeyText" />
+            </LinearLayout>
+        </FrameLayout>
     </LinearLayout>
 
     <FrameLayout

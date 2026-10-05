@@ -11,13 +11,13 @@ data class ClipboardItem(
     val updatedAtMs: Long
 )
 
-class ClipboardHistoryStore(context: Context) {
-    private val preferences: SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+class ClipboardHistoryStore internal constructor(private val preferences: SharedPreferences) {
+    constructor(context: Context) : this(context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
     private var cachedItems: List<ClipboardItem>? = null
+    private var cachedEncoded: String? = null
 
     fun addItem(rawText: String) {
-        val text = rawText.trim()
+        val text = rawText
         if (text.isBlank()) {
             return
         }
@@ -39,7 +39,7 @@ class ClipboardHistoryStore(context: Context) {
             )
         }
 
-        saveItems(sortItems(current).take(MAX_ITEMS))
+        saveItems(current)
     }
 
     fun setPinned(text: String, pinned: Boolean) {
@@ -65,9 +65,12 @@ class ClipboardHistoryStore(context: Context) {
         saveItems(filtered)
     }
 
+    fun clearUnpinned() { saveItems(getItems().filter { it.pinned }) }
+
     fun getItems(): List<ClipboardItem> {
-        cachedItems?.let { return it }
         val encoded = preferences.getString(KEY_ITEMS, null)
+        if (encoded == cachedEncoded) cachedItems?.let { return it }
+        cachedEncoded = encoded
         if (encoded.isNullOrBlank()) {
             cachedItems = emptyList()
             return emptyList()
@@ -79,7 +82,7 @@ class ClipboardHistoryStore(context: Context) {
                     val item = parsed.opt(i)
                     when (item) {
                         is String -> {
-                            val text = item.trim()
+                            val text = item
                             if (text.isNotBlank()) {
                                 add(
                                     ClipboardItem(
@@ -91,7 +94,7 @@ class ClipboardHistoryStore(context: Context) {
                             }
                         }
                         is JSONObject -> {
-                            val text = item.optString("text").trim()
+                            val text = item.optString("text")
                             if (text.isNotBlank()) {
                                 add(
                                     ClipboardItem(
@@ -104,7 +107,9 @@ class ClipboardHistoryStore(context: Context) {
                         }
                     }
                 }
-            }.let(::sortItems)
+            }.let { items ->
+                sortItems(items).take(MAX_ITEMS).also { if (items.size > MAX_ITEMS) saveItems(it) }
+            }
         } catch (_: Exception) {
             emptyList()
         }
@@ -113,6 +118,7 @@ class ClipboardHistoryStore(context: Context) {
     }
 
     private fun saveItems(items: List<ClipboardItem>) {
+        // Pins are protected; only the oldest unpinned clip is displaced.
         val normalized = sortItems(items).take(MAX_ITEMS)
         val encoded = JSONArray().apply {
             normalized.forEach { item ->
@@ -126,7 +132,8 @@ class ClipboardHistoryStore(context: Context) {
             }
         }
         cachedItems = normalized
-        preferences.edit().putString(KEY_ITEMS, encoded.toString()).apply()
+        cachedEncoded = encoded.toString()
+        preferences.edit().putString(KEY_ITEMS, cachedEncoded).apply()
     }
 
     private fun sortItems(items: List<ClipboardItem>): List<ClipboardItem> {
@@ -139,8 +146,8 @@ class ClipboardHistoryStore(context: Context) {
     }
 
     companion object {
+        const val MAX_ITEMS = 50
         private const val PREFS_NAME = "nboard_clipboard"
         private const val KEY_ITEMS = "items"
-        private const val MAX_ITEMS = 20
     }
 }

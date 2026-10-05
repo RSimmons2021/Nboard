@@ -21,6 +21,10 @@ class GeminiClient(
     override val isConfigured: Boolean
         get() = apiKey.isNotBlank() && model.isNotBlank()
 
+    override suspend fun generateStreaming(prompt: String, systemInstruction: String?, outputCharLimit: Int,
+        onPartial: (String) -> Unit): Result<String> = streamProvider(httpClient, StreamProvider.GEMINI,
+            "${endpointBaseUrl.trimEnd('/')}/models/$model:streamGenerateContent?alt=sse", apiKey.trim(), model, prompt, systemInstruction, outputCharLimit, onPartial)
+
     override suspend fun generateText(
         prompt: String,
         systemInstruction: String?,

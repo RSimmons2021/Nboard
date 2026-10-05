@@ -8,4 +8,13 @@ interface TextGenerationClient {
         systemInstruction: String? = null,
         outputCharLimit: Int = 0
     ): Result<String>
+
+    suspend fun generateStreaming(
+        prompt: String,
+        systemInstruction: String? = null,
+        outputCharLimit: Int = 0,
+        onPartial: (String) -> Unit
+    ): Result<String> = generateText(prompt, systemInstruction, outputCharLimit).also { result ->
+        result.onSuccess(onPartial)
+    }
 }

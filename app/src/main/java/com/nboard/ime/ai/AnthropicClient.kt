@@ -20,6 +20,10 @@ class AnthropicClient(
     override val isConfigured: Boolean
         get() = apiKey.isNotBlank() && model.isNotBlank()
 
+    override suspend fun generateStreaming(prompt: String, systemInstruction: String?, outputCharLimit: Int,
+        onPartial: (String) -> Unit): Result<String> = streamProvider(httpClient, StreamProvider.ANTHROPIC,
+            endpointUrl, apiKey.trim(), model.trim(), prompt, systemInstruction, outputCharLimit, onPartial)
+
     override suspend fun generateText(
         prompt: String,
         systemInstruction: String?,

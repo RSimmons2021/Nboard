@@ -104,6 +104,9 @@ internal fun NboardImeService.recordRejectedCorrection(source: String, corrected
     val key = correctionPairKey(normalizeWord(source), normalizeWord(corrected))
     val next = (rejectedCorrections[key] ?: 0) + 1
     rejectedCorrections[key] = next
+    val normalized = normalizeWord(corrected)
+    learnedWordFrequency[normalized]?.let { learnedWordFrequency[normalized] = (it - 3).coerceAtLeast(0) }
+    learningDirtyUpdates++
     saveRejectedCorrections()
 }
 
@@ -207,6 +210,11 @@ internal fun NboardImeService.loadPredictionLearning() {
             learnedTrigramFrequency.clear()
         }
     }
+    learnedWordLastUsed.clear()
+    runCatching {
+        val times = JSONObject(prefs.getString("learned_word_last_used_json", "{}") ?: "{}")
+        times.keys().forEach { word -> if (word in learnedWordFrequency) learnedWordLastUsed[word] = times.optLong(word) }
+    }
     learningDirtyUpdates = 0
     trimLearnedPredictionsIfNeeded(force = true)
 }
@@ -240,6 +248,7 @@ internal fun NboardImeService.savePredictionLearning(force: Boolean = false) {
     getSharedPreferences(KeyboardModeSettings.PREFS_NAME, Context.MODE_PRIVATE)
         .edit()
         .putString(KEY_LEARNED_WORD_COUNTS_JSON, wordsJson.toString())
+        .putString("learned_word_last_used_json", JSONObject(learnedWordLastUsed.toMap()).toString())
         .putString(KEY_LEARNED_BIGRAM_COUNTS_JSON, bigramsJson.toString())
         .putString(KEY_LEARNED_TRIGRAM_COUNTS_JSON, trigramsJson.toString())
         .apply()
@@ -247,6 +256,7 @@ internal fun NboardImeService.savePredictionLearning(force: Boolean = false) {
 }
 
 internal fun NboardImeService.learnPredictionFromContext(inputConnection: InputConnection) {
+    if (!smartTypingBehavior.shouldPersonalize()) return
     val beforeCursor = inputConnection
         .getTextBeforeCursor(LEARNING_CONTEXT_WINDOW, 0)
         ?.toString()
@@ -260,7 +270,7 @@ internal fun NboardImeService.learnPredictionFromContext(inputConnection: InputC
         return
     }
 
-    incrementLearnedWord(current, 1)
+    if (tokens.size < 2) incrementLearnedWord(current, 1)
     if (tokens.size >= 2) {
         val previous = tokens[tokens.lastIndex - 1]
         recordLearnedTransition(previous, current, boost = 1)
@@ -274,6 +284,7 @@ internal fun NboardImeService.learnPredictionFromContext(inputConnection: InputC
 }
 
 internal fun NboardImeService.recordLearnedTransition(previous: String?, current: String, boost: Int) {
+    if (!smartTypingBehavior.shouldPersonalize()) return
     val normalizedCurrent = normalizeWord(current)
     if (normalizedCurrent.length < 2) {
         return
@@ -290,6 +301,7 @@ internal fun NboardImeService.recordLearnedTransition(previous: String?, current
 }
 
 internal fun NboardImeService.recordLearnedTrigram(previous2: String?, previous1: String?, current: String, boost: Int) {
+    if (!smartTypingBehavior.shouldPersonalize()) return
     val normalizedCurrent = normalizeWord(current)
     if (normalizedCurrent.length < 2) {
         return
@@ -311,12 +323,14 @@ internal fun NboardImeService.recordLearnedTrigram(previous2: String?, previous1
 }
 
 internal fun NboardImeService.incrementLearnedWord(word: String, delta: Int) {
+    if (!smartTypingBehavior.shouldPersonalize()) return
     val normalized = normalizeWord(word)
     if (normalized.length < 2) {
         return
     }
     val next = (learnedWordFrequency[normalized] ?: 0) + delta
-    learnedWordFrequency[normalized] = next.coerceAtMost(MAX_LEARNING_COUNT)
+    learnedWordFrequency[normalized] = next.coerceIn(0, MAX_LEARNING_COUNT)
+    learnedWordLastUsed[normalized] = System.currentTimeMillis()
     learningDirtyUpdates++
 }
 
@@ -335,6 +349,7 @@ internal fun NboardImeService.trimLearnedPredictionsIfNeeded(force: Boolean) {
             .associate { it.key to it.value }
         learnedWordFrequency.clear()
         learnedWordFrequency.putAll(topWords)
+        learnedWordLastUsed.keys.retainAll(topWords.keys)
     }
     if (force || learnedBigramFrequency.size > MAX_LEARNED_BIGRAMS + LEARNED_TRIM_MARGIN) {
         val topBigrams = learnedBigramFrequency.entries

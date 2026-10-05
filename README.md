@@ -1,3 +1,5 @@
+> **Nothing hybrid fork:** Compose prediction motion, a 50-item persistent clipboard, Gboard-style settings and number hints, and optional ChatGPT plan sign-in. See [setup and behavior](docs/nothing-hybrid.md) and [prediction/performance improvements](docs/keyboard-improvements.md).
+
 # Nboard
 
 ![Version](https://img.shields.io/badge/version-1.5.1-yellow)

@@ -21,13 +21,11 @@ internal fun NboardImeService.commitWordPrediction(predictedWord: String) {
         ?.toString()
         .orEmpty()
     val fragment = extractCurrentWordFragment(beforeCursor)
-    if (fragment.isNotBlank()) {
-        inputConnection.deleteSurroundingText(fragment.length, 0)
-    }
     val sentenceContext = extractPredictionSentenceContext(beforeCursor)
     val (previousWord2, previousWord1) = extractPreviousWordsForPrediction(sentenceContext, fragment)
     inputConnection.beginBatchEdit()
     try {
+        if (fragment.isNotBlank()) inputConnection.deleteSurroundingText(fragment.length, 0)
         inputConnection.commitText(word, 1)
         inputConnection.commitText(" ", 1)
     } finally {
@@ -38,8 +36,30 @@ internal fun NboardImeService.commitWordPrediction(predictedWord: String) {
     recordLearnedTrigram(previousWord2, previousWord1, normalizedWord, boost = 3)
     learnPredictionFromContext(inputConnection)
     pendingAutoCorrection = null
+    pendingPredictionUndo = PredictionUndo(fragment, word, " ",
+        (minOf(editorSelectionStart, editorSelectionEnd)-fragment.length).coerceAtLeast(0), aiFieldRevision)
     val consumedOneShot = consumeOneShotShiftIfNeeded(word)
     refreshAutoShiftFromContextAndRerender(consumedOneShot)
+}
+
+internal data class PredictionUndo(val fragment: String, val accepted: String, val suffix: String,
+                                   val start: Int, val fieldRevision: Long)
+
+internal fun NboardImeService.tryUndoPrediction(): Boolean {
+    val undo = pendingPredictionUndo ?: return false
+    pendingPredictionUndo = null
+    val connection = currentInputConnection ?: return false
+    val inserted = undo.accepted + undo.suffix
+    if (aiFieldRevision != undo.fieldRevision || editorSelectionStart != undo.start+inserted.length ||
+        editorSelectionEnd != editorSelectionStart) return false
+    if (!connection.getSelectedText(0).isNullOrEmpty() || connection.getTextBeforeCursor(inserted.length, 0)?.toString() != inserted) return false
+    connection.beginBatchEdit()
+    try {
+        connection.deleteSurroundingText(inserted.length, 0)
+        connection.commitText(undo.fragment, 1)
+    } finally { connection.endBatchEdit() }
+    recordRejectedCorrection(undo.fragment, undo.accepted)
+    return true
 }
 
 internal fun NboardImeService.tryRevertLastAutoCorrection(): Boolean {
@@ -180,11 +200,13 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
         suggestion = autoCorrectEngine.correct(normalizedSource, previousWord)
         val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startNanos) / 1_000_000L
         if (elapsedMs > AUTOCORRECT_SLOW_LOG_THRESHOLD_MS) {
-            Log.w(TAG, "Autocorrect took ${elapsedMs}ms for '$normalizedSource'")
+            Log.w(TAG, "Autocorrect took ${elapsedMs}ms")
         }
     }
 
-    if (suggestion == null && shouldRunDictionaryApostropheFallback(normalizedSource)) {
+    // Recognized words need no broad variant search. Explicit apostrophe typo
+    // mappings above still apply (e.g. cant -> can't).
+    if (suggestion == null && !isKnownWord(normalizedSource) && shouldRunDictionaryApostropheFallback(normalizedSource)) {
         suggestion = findBestDictionaryCorrection(normalizedSource, contextLanguage)
     }
     suggestion = suggestion?.let(::normalizeWord) ?: return null

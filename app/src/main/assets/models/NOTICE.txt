@@ -1,0 +1,10 @@
+Nboard local prediction model: MrBob1337/keyboard-lm-daen
+https://huggingface.co/MrBob1337/keyboard-lm-daen
+Revision: 0bc4e92782575cdb324328c523a6649a7615ece4
+Weights unchanged. Weights/tokenizer CC-BY-SA-4.0. See LICENSE-daen.txt.
+SHA-256: 47b3a97a80ab96df2c7148b8bb155f471d0fe74bffed392c0c4ea220d36ea5f8
+
+Inference runtime: ggml-org/llama.cpp, MIT.
+https://github.com/ggml-org/llama.cpp
+Revision: 7049ff0cbeb1f5ead231de4522af6b75d8d773c0
+See LICENSE-llama.txt. No FUTO application source is included.

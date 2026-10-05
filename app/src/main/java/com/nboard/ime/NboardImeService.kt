@@ -65,7 +65,12 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
+import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.core.widget.doAfterTextChanged
+import com.nboard.ime.ai.ChatGptClient
+import com.nboard.ime.ai.ChatGptSession
 import com.nboard.ime.ai.GeminiClient
 import com.nboard.ime.ai.AnthropicClient
 import com.nboard.ime.ai.OpenAiCompatibleClient
@@ -85,8 +90,34 @@ import java.text.Normalizer
 import java.util.Locale
 
 class NboardImeService : InputMethodService() {
+    internal companion object {
+        @Volatile internal var debugInstance: java.lang.ref.WeakReference<NboardImeService>? = null
+    }
+    internal var aiGenerationJob: Job? = null
+    internal var aiFieldRevision = 0L
+    internal var aiSelectionRevision = 0L
+    internal var aiRequestRevision = 0L
+    internal var editorSelectionStart = 0
+    internal var editorSelectionEnd = 0
+    internal var aiPreview: AiPreview? = null
+    internal var aiUndo: AiUndo? = null
+    internal lateinit var aiPreviewPanel: View
+    internal lateinit var aiPreviewText: TextView
+    internal lateinit var aiPreviewApply: Button
+    internal lateinit var aiPreviewDiscard: Button
+    internal lateinit var aiPreviewStop: Button
+    internal lateinit var aiPreviewUndo: Button
+    internal val predictionRequests = kotlinx.coroutines.channels.Channel<PredictionWork>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    @Volatile internal var predictionRevision = 0L
+    internal var requestedPredictionKey: String? = null
+    internal var lastRankedPredictions = emptyList<String>()
+    internal val learnedWordLastUsed = mutableMapOf<String, Long>()
     internal val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var keyboardUiContext: Context
+    internal val keyPressPreview by lazy { KeyPressPreview(this) }
+    private var renderedKeyStructure: String? = null
+    private val shiftLetterViews = mutableMapOf<TextView, String>()
+    private var shiftKeyView: ImageButton? = null
 
     internal var clipboardManager: ClipboardManager? = null
     internal var vibrator: Vibrator? = null
@@ -125,12 +156,11 @@ class NboardImeService : InputMethodService() {
     internal lateinit var recentClipboardRow: LinearLayout
     internal lateinit var recentClipboardChip: AppCompatButton
     internal lateinit var recentClipboardChevronButton: ImageButton
-    internal lateinit var predictionRow: LinearLayout
-    internal lateinit var predictionWord1Button: AppCompatButton
-    internal lateinit var predictionWord2Button: AppCompatButton
-    internal lateinit var predictionWord3Button: AppCompatButton
-    internal lateinit var predictionSeparator1: TextView
-    internal lateinit var predictionSeparator2: TextView
+    internal lateinit var predictionRow: PredictionStripView
+    internal var isToolbarOpen = false
+    internal lateinit var toolbarActionsRow: View
+    internal lateinit var toolbarToggleButton: ImageButton
+    private var composeOwner: KeyboardComposeOwner? = null
 
     internal lateinit var keyRowsContainer: ViewGroup
     private lateinit var row0: LinearLayout
@@ -198,6 +228,7 @@ class NboardImeService : InputMethodService() {
     internal var activeVariantSession: VariantSelectionSession? = null
     internal var activeSwipePopupSession: SwipePopupSession? = null
     internal var pendingAutoCorrection: AutoCorrectionUndo? = null
+    internal var pendingPredictionUndo: PredictionUndo? = null
     internal var activeVoiceRecognizer: SpeechRecognizer? = null
     internal var aiPillShimmerAnimator: ValueAnimator? = null
     internal var aiTextPulseAnimator: ValueAnimator? = null
@@ -233,6 +264,7 @@ class NboardImeService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        if (BuildConfig.DEBUG) debugInstance = java.lang.ref.WeakReference(this)
         keyboardUiContext = this
         clipboardHistoryStore = ClipboardHistoryStore(this)
         reloadTypingSettings()
@@ -250,6 +282,7 @@ class NboardImeService : InputMethodService() {
         loadEmojiUsage()
         loadRejectedCorrections()
         loadPredictionLearning()
+        startPredictionWorker()
         resetLexicons()
         preloadLexiconsFromAssets()
         allEmojiCatalog.clear()
@@ -269,6 +302,8 @@ class NboardImeService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        if (debugInstance?.get() === this) debugInstance = null
+        keyPressPreview.hide()
         dismissActivePopup()
         stopAiProcessingAnimations()
         stopVoiceInput(forceCancel = true)
@@ -276,7 +311,10 @@ class NboardImeService : InputMethodService() {
         savePredictionLearning(force = true)
         recentClipboardExpiryJob?.cancel()
         clipboardManager?.removePrimaryClipChangedListener(clipboardListener)
+        if (::predictionRow.isInitialized) predictionRow.disposeComposition()
+        composeOwner?.destroy()
         serviceScope.cancel()
+        predictionRequests.close()
         super.onDestroy()
     }
 
@@ -287,6 +325,19 @@ class NboardImeService : InputMethodService() {
             predictionRenderCache = null
             keyboardUiContext = createKeyboardUiContext()
             val root = LayoutInflater.from(keyboardUiContext).inflate(R.layout.keyboard_view, null)
+            if (::predictionRow.isInitialized) predictionRow.disposeComposition()
+            val owner = composeOwner ?: KeyboardComposeOwner().also { composeOwner = it }
+            owner.let { owner ->
+                root.setViewTreeLifecycleOwner(owner)
+                root.setViewTreeSavedStateRegistryOwner(owner)
+                // WindowRecomposer starts at the IME window's content child, which
+                // sits above this root. Its owners must also exist on the decor.
+                window?.window?.decorView?.let { decor ->
+                    decor.setViewTreeLifecycleOwner(owner)
+                    decor.setViewTreeSavedStateRegistryOwner(owner)
+                }
+                owner.show()
+            }
             bindViews(root)
             applyTypographyAndIcons()
             setupEmojiPanel()
@@ -307,6 +358,15 @@ class NboardImeService : InputMethodService() {
 
     override fun onStartInput(editorInfo: EditorInfo?, restarting: Boolean) {
         super.onStartInput(editorInfo, restarting)
+        invalidatePredictions()
+        aiFieldRevision++
+        aiRequestRevision++
+        aiSelectionRevision++
+        editorSelectionStart = editorInfo?.initialSelStart ?: 0
+        editorSelectionEnd = editorInfo?.initialSelEnd ?: 0
+        aiPreview = null
+        aiUndo = null
+        aiGenerationJob?.cancel()
         manualShiftMode = ShiftMode.OFF
         isAutoShiftEnabled = true
         lastShiftTapAtMs = 0L
@@ -316,8 +376,10 @@ class NboardImeService : InputMethodService() {
         stopAiProcessingAnimations()
         stopVoiceInput(forceCancel = true)
         pendingAutoCorrection = null
+        pendingPredictionUndo = null
         activeSwipeTypingSession = null
         predictionRenderCache = null
+        isToolbarOpen = false
         inlineInputTarget = InlineInputTarget.NONE
         val newPackage = editorInfo?.packageName
         if (newPackage != activeEditorPackage) {
@@ -328,6 +390,7 @@ class NboardImeService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        composeOwner?.show()
         updateSmartTypingBehavior(info)
         reloadTypingSettings()
         reloadBottomModesFromSettings()
@@ -352,7 +415,17 @@ class NboardImeService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        keyPressPreview.hide()
+        pendingPredictionUndo = null
         super.onFinishInputView(finishingInput)
+        invalidatePredictions()
+        aiRequestRevision++
+        aiPreview = null
+        aiUndo = null
+        aiGenerationJob?.cancel()
+        savePredictionLearning()
+        if (::predictionRow.isInitialized) predictionRow.words = emptyList()
+        composeOwner?.hide()
         dismissActivePopup()
         stopAiProcessingAnimations()
         stopVoiceInput(forceCancel = true)
@@ -410,6 +483,7 @@ class NboardImeService : InputMethodService() {
         }
 
         textGenerationClient = when (KeyboardModeSettings.loadAiProvider(this)) {
+            AiProvider.CHATGPT -> ChatGptClient(ChatGptSession(this))
             AiProvider.GEMINI -> {
                 val storedKey = KeyboardModeSettings.loadGeminiApiKey(this)
                 val apiKey = storedKey.ifBlank { BuildConfig.GEMINI_API_KEY }
@@ -468,6 +542,13 @@ class NboardImeService : InputMethodService() {
             candidatesStart,
             candidatesEnd
         )
+        if (newSelStart != editorSelectionStart || newSelEnd != editorSelectionEnd) aiSelectionRevision++
+        editorSelectionStart = newSelStart
+        editorSelectionEnd = newSelEnd
+        pendingPredictionUndo?.let { undo ->
+            if (newSelStart != undo.start+undo.accepted.length+undo.suffix.length || newSelStart != newSelEnd) pendingPredictionUndo = null
+        }
+        updateAiPreviewUi()
         if (isAiPromptInputActive() || isEmojiSearchInputActive()) {
             clearInlinePromptFocus()
         }
@@ -514,6 +595,16 @@ class NboardImeService : InputMethodService() {
     }
 
     private fun bindViews(root: View) {
+        aiPreviewPanel = root.findViewById(R.id.aiPreviewPanel)
+        aiPreviewText = root.findViewById(R.id.aiPreviewText)
+        aiPreviewApply = root.findViewById(R.id.aiPreviewApply)
+        aiPreviewDiscard = root.findViewById(R.id.aiPreviewDiscard)
+        aiPreviewStop = root.findViewById(R.id.aiPreviewStop)
+        aiPreviewUndo = root.findViewById(R.id.aiPreviewUndo)
+        aiPreviewApply.setOnClickListener { applyAiPreview() }
+        aiPreviewDiscard.setOnClickListener { aiPreview = null; updateAiPreviewUi() }
+        aiPreviewStop.setOnClickListener { stopAiGeneration() }
+        aiPreviewUndo.setOnClickListener { undoAiEdit() }
         keyboardRoot = root.findViewById(R.id.keyboardRoot)
         voiceInputGlow = root.findViewById(R.id.voiceInputGlow)
         swipeTrailView = root.findViewById(R.id.swipeTrailView)
@@ -547,11 +638,24 @@ class NboardImeService : InputMethodService() {
         recentClipboardChip = root.findViewById(R.id.recentClipboardChip)
         recentClipboardChevronButton = root.findViewById(R.id.recentClipboardChevronButton)
         predictionRow = root.findViewById(R.id.predictionRow)
-        predictionWord1Button = root.findViewById(R.id.predictionWord1Button)
-        predictionWord2Button = root.findViewById(R.id.predictionWord2Button)
-        predictionWord3Button = root.findViewById(R.id.predictionWord3Button)
-        predictionSeparator1 = root.findViewById(R.id.predictionSeparator1)
-        predictionSeparator2 = root.findViewById(R.id.predictionSeparator2)
+        toolbarActionsRow = root.findViewById(R.id.toolbarActionsRow)
+        toolbarToggleButton = root.findViewById(R.id.toolbarToggleButton)
+        bindPressAction(toolbarToggleButton) { isToolbarOpen = !isToolbarOpen; refreshUi() }
+        bindPressAction(root.findViewById(R.id.toolbarClipboardButton)) { toggleClipboardMode() }
+        bindPressAction(root.findViewById(R.id.toolbarSettingsButton)) {
+            startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        bindPressAction(root.findViewById(R.id.toolbarAiButton)) { performBottomModeTap(BottomKeyMode.AI) }
+        bindPressAction(root.findViewById(R.id.toolbarCloseButton)) {
+            isToolbarOpen = false
+            isClipboardOpen = false
+            isEmojiMode = false
+            isAiMode = false
+            isNumbersMode = false
+            isSymbolsSubmenuOpen = false
+            renderKeyRows()
+            refreshUi()
+        }
 
         keyRowsContainer = root.findViewById(R.id.keyRowsContainer)
         row0 = root.findViewById(R.id.row0)
@@ -605,9 +709,10 @@ class NboardImeService : InputMethodService() {
         emojiSearchIconButton.background = null
         recentClipboardChip.background = uiDrawable(R.drawable.bg_chip)
         recentClipboardChevronButton.background = null
-        predictionWord1Button.background = uiDrawable(R.drawable.bg_prediction_side_chip)
-        predictionWord2Button.background = uiDrawable(R.drawable.bg_chip)
-        predictionWord3Button.background = uiDrawable(R.drawable.bg_prediction_side_chip)
+
+        predictionRow.foreground = Color(uiColor(R.color.key_text))
+        predictionRow.useRoboto = keyboardFontMode == KeyboardFontMode.ROBOTO
+        predictionRow.animateWords = KeyboardModeSettings.loadPredictionMotionEnabled(this)
 
         applySerifTypeface(modeSwitchButton)
         modeSwitchButton.textSize = 15f
@@ -622,9 +727,6 @@ class NboardImeService : InputMethodService() {
         applyInterTypeface(aiPromptInput)
         applyInterTypeface(emojiSearchInput)
         applyInterTypeface(recentClipboardChip)
-        applyInterTypeface(predictionWord1Button)
-        applyInterTypeface(predictionWord2Button)
-        applyInterTypeface(predictionWord3Button)
         aiPromptInput.filters = arrayOf(InputFilter.LengthFilter(AI_PILL_CHAR_LIMIT))
         aiSummarizeButton.setTextColor(uiColor(R.color.ai_text))
         aiFixGrammarButton.setTextColor(uiColor(R.color.ai_text))
@@ -644,11 +746,6 @@ class NboardImeService : InputMethodService() {
         leftPunctuationButton.translationY = dp(1).toFloat()
         rightPunctuationButton.translationY = dp(1).toFloat()
         recentClipboardChip.setTextColor(uiColor(R.color.key_text))
-        predictionWord1Button.setTextColor(uiColor(R.color.key_text))
-        predictionWord2Button.setTextColor(uiColor(R.color.key_text))
-        predictionWord3Button.setTextColor(uiColor(R.color.key_text))
-        predictionSeparator1.setTextColor(uiColor(R.color.key_text))
-        predictionSeparator2.setTextColor(uiColor(R.color.key_text))
         aiPromptInput.setTextColor(uiColor(R.color.ai_text))
         aiPromptInput.setHintTextColor(uiColor(R.color.ai_hint))
         emojiSearchInput.setTextColor(uiColor(R.color.ai_text))
@@ -695,9 +792,6 @@ class NboardImeService : InputMethodService() {
         flattenView(emojiSearchIconButton)
         flattenView(recentClipboardChip)
         flattenView(recentClipboardChevronButton)
-        flattenView(predictionWord1Button)
-        flattenView(predictionWord2Button)
-        flattenView(predictionWord3Button)
     }
 
     private fun setupEmojiPanel() {
@@ -910,14 +1004,9 @@ class NboardImeService : InputMethodService() {
             }
         }
 
-        bindPressAction(predictionWord1Button) {
-            commitWordPrediction(predictionWord1Button.text?.toString().orEmpty())
-        }
-        bindPressAction(predictionWord2Button) {
-            commitWordPrediction(predictionWord2Button.text?.toString().orEmpty())
-        }
-        bindPressAction(predictionWord3Button) {
-            commitWordPrediction(predictionWord3Button.text?.toString().orEmpty())
+        predictionRow.onAccept = { word ->
+            performKeyHaptic(predictionRow)
+            commitWordPrediction(word)
         }
 
         aiPromptInput.setOnFocusChangeListener { _, hasFocus ->
@@ -943,6 +1032,19 @@ class NboardImeService : InputMethodService() {
 
     internal fun renderKeyRows() {
         isNumberRowEnabled = KeyboardModeSettings.loadNumberRowEnabled(this)
+        val structure = listOf(isNumbersMode, isSymbolsSubmenuOpen, isNumberRowEnabled,
+            activeLayoutPack.row1, activeLayoutPack.row2, activeLayoutPack.row3, hasApostropheBottomSlot(),
+            keyboardFontMode, appThemeMode, keyboardUiContext.resources.configuration.uiMode,
+            swipeTypingEnabled, activeLayoutPack.variants, isGboardLayoutActive(),
+            resources.configuration.orientation, System.identityHashCode(row1)).toString()
+        if (renderedKeyStructure == structure && row1.childCount > 0) {
+            updateShiftKeyLabels()
+            return
+        }
+        renderedKeyStructure = structure
+        keyPressPreview.hide()
+        shiftLetterViews.clear()
+        shiftKeyView = null
         dismissActivePopup()
         activeSwipeTypingSession = null
         swipeLetterKeyByView.clear()
@@ -971,10 +1073,10 @@ class NboardImeService : InputMethodService() {
                     isSymbolsSubmenuOpen = false
                     renderKeyRows()
                 }
-                addTextKeys(row3, listOf("<", ">", "[", "]", "_", "+", "!", "?"), includeEndSpacing = true)
+                addTextKeys(row3, listOf("<", ">", "[", "]", "_", "+", "€", "="), includeEndSpacing = true)
             } else {
                 addTextKeys(row1, listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"))
-                addTextKeys(row2, listOf("@", "#", "€", "-", "&", "_", "+", "(", ")", "/"))
+                addTextKeys(row2, listOf("!", "@", "#", "$", "&", "-", "_", "(", ")", "/"))
                 addSpecialKey(
                     row = row3,
                     label = "=/<",
@@ -989,7 +1091,7 @@ class NboardImeService : InputMethodService() {
                     isSymbolsSubmenuOpen = true
                     renderKeyRows()
                 }
-                addTextKeys(row3, listOf("*", "\"", "'", ";", ":", ",", ".", "="), includeEndSpacing = true)
+                addTextKeys(row3, listOf("*", "\"", "'", ";", ":", ",", ".", "?"), includeEndSpacing = true)
             }
 
             addSpecialKey(
@@ -1018,7 +1120,7 @@ class NboardImeService : InputMethodService() {
             emptyMap()
         } else {
             alphaRow1.mapIndexed { index, label ->
-                label to ((index + 1) % 10).toString()
+                label.lowercase(Locale.US) to ((index + 1) % 10).toString()
             }.toMap()
         }
 
@@ -1038,7 +1140,7 @@ class NboardImeService : InputMethodService() {
             addTextKeys(row2, alphaRow2, shiftAware = true)
         }
 
-        addSpecialKey(
+        shiftKeyView = addSpecialKey(
             row = row3,
             label = null,
             iconRes = if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide,
@@ -1053,7 +1155,7 @@ class NboardImeService : InputMethodService() {
         ) {
             handleShiftTap()
             renderKeyRows()
-        }
+        } as ImageButton
 
         addTextKeys(
             row = row3,
@@ -1134,9 +1236,22 @@ class NboardImeService : InputMethodService() {
                 }
                 commitKeyText(committed)
             }
+            (keyView as? NumberHintButton)?.numberHint = forcedTopVariant
+            if (shiftAware && keyView is TextView) shiftLetterViews[keyView] = original
             if (swipeToken != null) {
                 swipeLetterKeyByView[keyView] = swipeToken
             }
+        }
+    }
+
+    private fun updateShiftKeyLabels() {
+        shiftLetterViews.forEach { (view, original) ->
+            val label = if (isShiftActive()) original.uppercase(Locale.US) else original
+            if (view.text.toString() != label) view.text = label
+        }
+        shiftKeyView?.let { key ->
+            setIcon(key, if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide, R.color.key_text)
+            key.background = uiDrawable(if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.bg_mode_special_selected else R.drawable.bg_special_key)
         }
     }
 
@@ -1183,7 +1298,7 @@ class NboardImeService : InputMethodService() {
         if (allowForcedDigitVariant) {
             forcedVariant?.let { variants.add(it) }
         }
-        val sourceVariants = layoutVariants ?: VARIANT_MAP[key].orEmpty()
+        val sourceVariants = layoutVariants.orEmpty() + VARIANT_MAP[key].orEmpty()
         sourceVariants.forEach { variants.add(it) }
         if (variants.isEmpty()) {
             return null
@@ -1225,8 +1340,21 @@ class NboardImeService : InputMethodService() {
             clipChildren = false
         }
 
+        row.orientation = LinearLayout.VERTICAL
+        // Keep every alternative on screen, including numbers plus vowel accents.
+        val maxColumns = ((resources.displayMetrics.widthPixels - dp(32)) / dp(44)).coerceAtLeast(3)
+        val columns = minOf(maxColumns, options.size)
         val optionViews = mutableListOf<AppCompatTextView>()
-        options.forEach { value ->
+        var optionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(optionRow)
+        options.forEachIndexed { index, value ->
+            if (index > 0 && index % columns == 0) {
+                optionRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(0, dp(4), 0, 0)
+                }
+                row.addView(optionRow)
+            }
             val option = AppCompatTextView(this).apply {
                 text = value
                 gravity = Gravity.CENTER
@@ -1236,11 +1364,11 @@ class NboardImeService : InputMethodService() {
                 background = uiDrawable(R.drawable.bg_popup_option)
                 minWidth = dp(40)
                 setPadding(dp(8), dp(8), dp(8), dp(8))
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).also {
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).also {
                     it.marginEnd = dp(4)
                 }
             }
-            row.addView(option)
+            optionRow.addView(option)
             optionViews.add(option)
         }
 
@@ -1298,7 +1426,8 @@ class NboardImeService : InputMethodService() {
                 val loc = IntArray(2)
                 view.getLocationOnScreen(loc)
                 val centerX = loc[0] + view.width / 2f
-                val distance = kotlin.math.abs(centerX - rawX)
+                val centerY = loc[1] + view.height / 2f
+                val distance = (centerX - rawX) * (centerX - rawX) + (centerY - rawY) * (centerY - rawY)
                 if (distance < nearestDistance) {
                     nearestDistance = distance
                     selected = index
@@ -1367,7 +1496,8 @@ class NboardImeService : InputMethodService() {
                 val loc = IntArray(2)
                 view.getLocationOnScreen(loc)
                 val centerX = loc[0] + view.width / 2f
-                val distance = kotlin.math.abs(centerX - rawX)
+                val centerY = loc[1] + view.height / 2f
+                val distance = (centerX - rawX) * (centerX - rawX) + (centerY - rawY) * (centerY - rawY)
                 if (distance < nearestDistance) {
                     nearestDistance = distance
                     selected = index

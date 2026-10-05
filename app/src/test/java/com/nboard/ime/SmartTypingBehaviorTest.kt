@@ -6,6 +6,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SmartTypingBehaviorTest {
+    @org.junit.Test
+    fun `personalization is disabled for passwords and private editors`() {
+        org.junit.Assert.assertFalse(SmartTypingBehavior(android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD).shouldPersonalize())
+        org.junit.Assert.assertFalse(SmartTypingBehavior(android.text.InputType.TYPE_CLASS_NUMBER or
+            android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD).shouldPersonalize())
+        org.junit.Assert.assertFalse(SmartTypingBehavior(android.text.InputType.TYPE_CLASS_TEXT,
+            android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING).shouldPersonalize())
+        org.junit.Assert.assertTrue(SmartTypingBehavior(android.text.InputType.TYPE_CLASS_TEXT).shouldPersonalize())
+    }
     @Test
     fun autoSpaceAndCapitalize_enabledForNormalText() {
         val behavior = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_NORMAL)

@@ -16,6 +16,7 @@ import android.view.inputmethod.InputContentInfo
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.PopupWindow
+import android.widget.TextView
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.AppCompatImageButton
 import kotlinx.coroutines.Dispatchers
@@ -102,31 +103,42 @@ internal fun NboardImeService.renderClipboardItems() {
         return
     }
 
-    val gridItems = items.take(MAX_CLIPBOARD_GRID_ITEMS)
-    val rows = gridItems.chunked(2)
-    rows.forEachIndexed { rowIndex, rowItems ->
-        val row = buildClipboardRow()
-        rowItems.forEach { item ->
-            val text = item.text
-            val button = buildClipboardButton(text, pinned = item.pinned, enabled = true) {
-                if (isAiMode) {
-                    appendPromptText(text)
-                } else {
-                    currentInputConnection?.commitText(text, 1)
+    fun addSection(title: String, entries: List<com.nboard.ime.clipboard.ClipboardItem>) {
+        if (entries.isEmpty()) return
+        clipboardItemsContainer.addView(TextView(this).apply {
+            text = title
+            textSize = 12f
+            setTextColor(uiColor(R.color.key_text))
+            setPadding(dp(4), dp(12), dp(4), dp(8))
+            applyInterTypeface(this)
+        })
+        val rows = entries.chunked(2)
+        rows.forEachIndexed { rowIndex, rowItems ->
+            val row = buildClipboardRow()
+            rowItems.forEach { item ->
+                val text = item.text
+                val button = buildClipboardButton(text, pinned = item.pinned, enabled = true) {
+                    if (isAiMode) {
+                        appendPromptText(text)
+                    } else {
+                        currentInputConnection?.commitText(text, 1)
+                    }
+                    isClipboardOpen = false
+                    refreshUi()
                 }
-                isClipboardOpen = false
-                refreshUi()
+                row.addView(button)
             }
-            row.addView(button)
+            if (rowItems.size == 1) {
+                row.addView(buildClipboardSpacer())
+            }
+            if (rowIndex < rows.lastIndex) {
+                (row.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = dp(8)
+            }
+            clipboardItemsContainer.addView(row)
         }
-        if (rowItems.size == 1) {
-            row.addView(buildClipboardSpacer())
-        }
-        if (rowIndex < rows.lastIndex) {
-            (row.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = dp(8)
-        }
-        clipboardItemsContainer.addView(row)
     }
+    addSection("Pinned", items.filter { it.pinned })
+    addSection("Saved · up to 50 clips, no expiry", items.filterNot { it.pinned })
 }
 
 internal fun NboardImeService.buildClipboardRow(): LinearLayout {
@@ -141,7 +153,7 @@ internal fun NboardImeService.buildClipboardRow(): LinearLayout {
 
 internal fun NboardImeService.buildClipboardSpacer(): View {
     return View(this).apply {
-        layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).also {
+        layoutParams = LinearLayout.LayoutParams(0, dp(72), 1f).also {
             it.marginStart = dp(5)
         }
     }
@@ -154,7 +166,13 @@ internal fun NboardImeService.buildClipboardButton(
     onClick: () -> Unit
 ): Button {
     return AppCompatButton(this).apply {
-        this.text = if (pinned) "• $text" else text
+        this.text = text
+        contentDescription = if (pinned) "Pinned clip: $text. Hold to unpin or delete." else "$text. Hold to pin or delete."
+        if (pinned) {
+            val pin = uiDrawable(R.drawable.ic_pin_lucide)?.mutate()?.apply { setTint(uiColor(R.color.key_text)) }
+            setCompoundDrawablesRelativeWithIntrinsicBounds(pin, null, null, null)
+            compoundDrawablePadding = dp(6)
+        }
         setAllCaps(false)
         applyInterTypeface(this)
         isEnabled = enabled
@@ -174,7 +192,7 @@ internal fun NboardImeService.buildClipboardButton(
             tapOnDown = false,
             onTap = onClick
         )
-        layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).also {
+        layoutParams = LinearLayout.LayoutParams(0, dp(72), 1f).also {
             it.marginEnd = dp(5)
         }
     }
@@ -205,6 +223,9 @@ internal fun NboardImeService.showClipboardItemActionsPopup(
                 if (selected) R.drawable.bg_popup_option_selected else R.drawable.bg_popup_option
             )
             setIcon(this, iconRes, R.color.key_text)
+            contentDescription = if (iconRes == R.drawable.ic_pin_lucide) {
+                if (pinned) "Unpin clip" else "Pin clip"
+            } else if (iconRes == R.drawable.ic_ai_custom) "Use clip in AI assistance" else "Delete clip"
             isEnabled = enabled
             alpha = if (enabled) 1f else 0.42f
             flattenView(this)
@@ -403,6 +424,7 @@ internal fun NboardImeService.scheduleRecentClipboardExpiry() {
 }
 
 internal fun NboardImeService.captureClipboardPrimary() {
+    if (!KeyboardModeSettings.loadClipboardHistoryEnabled(this)) return
     val manager = clipboardManager ?: return
     try {
         val clipData = manager.primaryClip ?: return
@@ -412,6 +434,7 @@ internal fun NboardImeService.captureClipboardPrimary() {
 
         val item = clipData.getItemAt(0)
         val description = manager.primaryClipDescription ?: clipData.description
+        if (description.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true) return
         val itemUri = item.uri
         val imageMimeType = resolveClipboardImageMimeType(description, itemUri)
 
@@ -431,7 +454,7 @@ internal fun NboardImeService.captureClipboardPrimary() {
             return
         }
 
-        val itemText = item.coerceToText(this)?.toString()?.trim().orEmpty()
+        val itemText = item.coerceToText(this)?.toString().orEmpty()
         if (itemText.isBlank()) {
             return
         }
@@ -454,4 +477,3 @@ internal fun NboardImeService.captureClipboardPrimary() {
         Log.w(TAG, "Clipboard read failed", error)
     }
 }
-

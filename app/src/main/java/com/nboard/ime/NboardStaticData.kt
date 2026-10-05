@@ -21,18 +21,30 @@ val GBOARD_QWERTY_ROW_2 = listOf("a", "s", "d", "f", "g", "h", "j", "k", "l")
 val GBOARD_QWERTY_ROW_3 = listOf("z", "x", "c", "v", "b", "n", "m", "'")
 
 val VARIANT_MAP = mapOf(
-        "a" to listOf("à", "â", "ä", "æ", "á", "ã", "å"),
-        "e" to listOf("é", "è", "ê", "ë", "€", "ē"),
-        "i" to listOf("î", "ï", "ì", "í", "ī"),
-        "o" to listOf("ô", "ö", "œ", "ò", "ó", "õ", "ø"),
-        "u" to listOf("ù", "û", "ü", "ú", "ū"),
-        "c" to listOf("ç"),
-        "n" to listOf("ñ", "ń"),
+        "a" to listOf("à", "á", "â", "ä", "æ", "ã", "å", "ā", "ą"),
+        "e" to listOf("é", "è", "ê", "ë", "ē", "ė", "ę", "€"),
+        "i" to listOf("ì", "í", "î", "ï", "ī", "į", "ı"),
+        "o" to listOf("ò", "ó", "ô", "ö", "œ", "õ", "ø", "ō", "ő"),
+        "u" to listOf("ù", "ú", "û", "ü", "ū", "ů", "ű", "ų"),
+        "c" to listOf("ç", "ć", "č"),
+        "s" to listOf("ß", "ś", "š", "ş"),
+        "z" to listOf("ž", "ź", "ż"),
+        "l" to listOf("ł", "ľ", "ĺ"),
+        "r" to listOf("ř", "ŕ"),
+        "d" to listOf("ď", "đ", "ð"),
+        "t" to listOf("ť", "ţ", "þ"),
+        "g" to listOf("ğ", "ģ", "ǧ"),
+        "h" to listOf("ħ", "ĥ"),
+        "j" to listOf("ĵ"),
+        "k" to listOf("ķ", "ĸ"),
+        "w" to listOf("ŵ", "ẁ", "ẃ", "ẅ"),
+        "n" to listOf("ñ", "ń", "ň", "ņ"),
         "y" to listOf("ÿ", "ý"),
         "'" to listOf("’", "ʼ", "`", "´"),
         "\"" to listOf("«", "»", "“", "”"),
         "." to listOf("!", "?", ";", "…", "•", "·"),
         "," to listOf(".", ";", ":", "…", "!", "?", "'"),
+        "$" to listOf("€", "£", "¥", "₹", "₩", "¢"),
         "-" to listOf("-", "–", "—", "•")
     )
 

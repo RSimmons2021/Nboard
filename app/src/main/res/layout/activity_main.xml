@@ -42,7 +42,7 @@
                 android:padding="7dp"
                 android:scaleType="centerInside"
                 android:src="@drawable/ic_cup_lucide"
-                android:tint="?android:attr/textColorPrimary" />
+                app:tint="?android:attr/textColorPrimary" />
         </LinearLayout>
 
         <EditText
@@ -79,7 +79,7 @@
                 android:layout_height="16dp"
                 android:contentDescription="@null"
                 android:src="@drawable/ic_globe_lucide"
-                android:tint="?android:attr/textColorSecondary" />
+                app:tint="?android:attr/textColorSecondary" />
 
             <TextView
                 android:id="@+id/uploadedLayoutNoticeText"
@@ -136,7 +136,7 @@
                     android:layout_height="17dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_wrench_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -170,7 +170,7 @@
                     android:layout_height="17dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_rotate_ccw_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
         </LinearLayout>
 
@@ -226,7 +226,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -317,7 +317,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -352,7 +352,7 @@
                     android:layout_height="17dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_external_link_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -395,7 +395,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_arrow_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -439,7 +439,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_trash_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
         </LinearLayout>
@@ -496,7 +496,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -540,7 +540,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -584,7 +584,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -628,7 +628,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
         </LinearLayout>
 
@@ -705,7 +705,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -749,7 +749,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -796,7 +796,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -840,7 +840,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
         </LinearLayout>
 
@@ -940,7 +940,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -984,7 +984,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
         </LinearLayout>
 
@@ -1178,7 +1178,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -1222,7 +1222,7 @@
                     android:layout_height="16dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_chevron_down_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
         </LinearLayout>
 
@@ -1268,7 +1268,7 @@
                     android:layout_height="17dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_external_link_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
 
             <View
@@ -1302,7 +1302,7 @@
                     android:layout_height="17dp"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_external_link_lucide"
-                    android:tint="?android:attr/textColorPrimary" />
+                    app:tint="?android:attr/textColorPrimary" />
             </LinearLayout>
         </LinearLayout>
 

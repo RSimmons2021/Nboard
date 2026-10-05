@@ -60,7 +60,7 @@ internal fun NboardImeService.consumeOneShotShiftIfNeeded(committedText: String)
     return false
 }
 
-internal fun NboardImeService.refreshAutoShiftFromContext() {
+internal fun NboardImeService.refreshAutoShiftFromContext(beforeCursor: String? = null) {
     if (manualShiftMode != ShiftMode.OFF || isNumbersMode || isEmojiMode || isClipboardOpen || isAiMode) {
         isAutoShiftEnabled = false
         return
@@ -70,7 +70,7 @@ internal fun NboardImeService.refreshAutoShiftFromContext() {
         return
     }
 
-    val textBeforeCursor = currentInputConnection
+    val textBeforeCursor = beforeCursor ?: currentInputConnection
         ?.getTextBeforeCursor(AUTO_SHIFT_CONTEXT_WINDOW, 0)
         ?.toString()
         .orEmpty()
@@ -100,14 +100,14 @@ internal fun NboardImeService.refreshAutoShiftFromContext() {
 }
 
 internal fun NboardImeService.refreshAutoShiftFromContextAndRerender(forceRerender: Boolean = false) {
+    val beforeCursor = readKeyboardContext()
     val previous = isAutoShiftEnabled
-    refreshAutoShiftFromContext()
+    refreshAutoShiftFromContext(beforeCursor)
     if ((forceRerender || previous != isAutoShiftEnabled) && !isNumbersMode && !isEmojiMode && !isClipboardOpen) {
         renderKeyRows()
     }
     if (isPredictionRowInitialized()) {
-        renderPredictionRow()
-        setVisibleAnimated(predictionRow, shouldShowPredictionRow() && hasPredictionSuggestions)
+        refreshUi(beforeCursor)
     }
 }
 
@@ -144,6 +144,7 @@ internal fun NboardImeService.commitSwipeWord(word: String) {
 }
 
 internal fun NboardImeService.deleteOneCharacter() {
+    if (!isAiPromptInputActive()) aiUndo = null
     pendingAutoInsertedSentenceSpace = false
     if (isAiPromptInputActive()) {
         val editable = aiPromptInput.text
@@ -171,7 +172,7 @@ internal fun NboardImeService.deleteOneCharacter() {
         }
         return
     }
-    if (tryRevertLastAutoCorrection()) {
+    if (tryUndoPrediction() || tryRevertLastAutoCorrection()) {
         refreshAutoShiftFromContextAndRerender()
         return
     }
@@ -220,6 +221,8 @@ internal fun NboardImeService.previousGraphemeSize(text: String): Int {
 }
 
 internal fun NboardImeService.commitKeyText(text: String) {
+    if (!isAiPromptInputActive()) aiUndo = null
+    if (!isAiPromptInputActive()) pendingPredictionUndo = null
     if (isAiPromptInputActive()) {
         appendPromptText(text)
         return
@@ -231,27 +234,30 @@ internal fun NboardImeService.commitKeyText(text: String) {
 
     val inputConnection = currentInputConnection ?: return
     val committedChar = text.singleOrNull()
+    val needsPunctuationContext = committedChar in SMART_TYPING_SENTENCE_ENDERS &&
+        (pendingAutoInsertedSentenceSpace ||
+            autoSpaceAfterPunctuationEnabled && smartTypingBehavior.shouldAutoSpaceAndCapitalize())
+    // Ordinary letters do not need three synchronous round trips to the editor.
+    var beforeCursorText = if (needsPunctuationContext) inputConnection.getTextBeforeCursor(3, 0)?.toString().orEmpty() else ""
+    val hasSelection = needsPunctuationContext && !inputConnection.getSelectedText(0).isNullOrEmpty()
     if (committedChar != null &&
         committedChar in SMART_TYPING_SENTENCE_ENDERS &&
         pendingAutoInsertedSentenceSpace
     ) {
-        val beforeCursor = inputConnection.getTextBeforeCursor(2, 0)?.toString().orEmpty()
-        val hasSelection = !inputConnection.getSelectedText(0).isNullOrEmpty()
         if (!hasSelection &&
-            beforeCursor.length >= 2 &&
-            beforeCursor.last() == ' ' &&
-            beforeCursor[beforeCursor.lastIndex - 1] in SMART_TYPING_SENTENCE_ENDERS
+            beforeCursorText.length >= 2 &&
+            beforeCursorText.last() == ' ' &&
+            beforeCursorText[beforeCursorText.lastIndex - 1] in SMART_TYPING_SENTENCE_ENDERS
         ) {
             inputConnection.deleteSurroundingText(1, 0)
+            beforeCursorText = beforeCursorText.dropLast(1)
         }
     }
     pendingAutoInsertedSentenceSpace = false
 
-    val beforeCursorText = inputConnection.getTextBeforeCursor(3, 0)?.toString().orEmpty()
     val previousChar = beforeCursorText.lastOrNull()
     val last2Chars = beforeCursorText.takeLast(2).takeIf { it.length == 2 }
-    val nextChar = inputConnection.getTextAfterCursor(1, 0)?.toString()?.firstOrNull()
-    val hasSelection = !inputConnection.getSelectedText(0).isNullOrEmpty()
+    val nextChar = if (needsPunctuationContext) inputConnection.getTextAfterCursor(1, 0)?.toString()?.firstOrNull() else null
     var autoCorrection: AutoCorrectionResult? = null
     var committedSuffix = text
     inputConnection.beginBatchEdit()

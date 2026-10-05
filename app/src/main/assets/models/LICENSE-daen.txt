@@ -1,0 +1,10 @@
+Model weights, tokenizer and dictionary in this repository are licensed under
+the Creative Commons Attribution-ShareAlike 4.0 International License
+(CC-BY-SA-4.0): https://creativecommons.org/licenses/by-sa/4.0/
+
+Everything under scripts/ is licensed MIT. Portions are adapted from
+keyboard-lm-de, Copyright (c) 2025 Janis Blechert; that project's MIT licence
+is reproduced at scripts/LICENSE-keyboard-lm-de-MIT and applies to the adapted
+portions.
+
+See README.md for training-data sources and their licences.

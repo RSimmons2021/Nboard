@@ -1,10 +1,16 @@
 package com.nboard.ime
 
+import androidx.lifecycle.lifecycleScope
+import com.nboard.ime.ai.ChatGptSession
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Vibrator
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
@@ -102,6 +108,7 @@ class MainActivity : AppCompatActivity() {
         applyStatusBarInset()
         bindActions()
         refreshValues()
+        configureCategoryPage()
         maybeShowFirstLaunchOnboarding()
     }
 
@@ -119,6 +126,44 @@ class MainActivity : AppCompatActivity() {
             insets
         }
         ViewCompat.requestApplyInsets(content)
+    }
+
+    private fun configureCategoryPage() {
+        val container = findViewById<LinearLayout>(R.id.settingsContent)
+        val motion = com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = "Fluid prediction animation"
+            isChecked = KeyboardModeSettings.loadPredictionMotionEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, checked ->
+                KeyboardModeSettings.savePredictionMotionEnabled(this@MainActivity, checked)
+            }
+        }
+        val correctionCard = findViewById<View>(R.id.wordPredictionRow).parent as LinearLayout
+        correctionCard.addView(motion)
+        val section = intent.getStringExtra("section") ?: return
+        val selected = when (section) {
+            "Preferences" -> setOf("Typing option", "Key settings")
+            "Text correction" -> setOf("Typing option", "Beta features")
+            else -> setOf(section)
+        }
+        var currentSection = "Header"
+        val headings = setOf("System", "Language settings", "Typing option", "Beta features", "Key settings", "AI settings", "Theme settings", "Licences")
+        fun headingText(view: View): String? {
+            if (view is TextView && view.text.toString() in headings) return view.text.toString()
+            if (view is android.view.ViewGroup) {
+                for (i in 0 until view.childCount) headingText(view.getChildAt(i))?.let { return it }
+            }
+            return null
+        }
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            headingText(child)?.let { currentSection = it }
+            if (currentSection != "Header") child.visibility = if (currentSection in selected) View.VISIBLE else View.GONE
+        }
+        val back = com.google.android.material.button.MaterialButton(this).apply {
+            text = "‹  $section"
+            setOnClickListener { finish() }
+        }
+        container.addView(back, 0)
     }
 
     private fun bindActions() {
@@ -352,9 +397,52 @@ class MainActivity : AppCompatActivity() {
 
     private fun showProviderConfigurationDialog() {
         when (KeyboardModeSettings.loadAiProvider(this)) {
+            AiProvider.CHATGPT -> showChatGptConfiguration()
             AiProvider.GEMINI -> showGeminiApiKeyDialog()
             AiProvider.ANTHROPIC -> showAnthropicApiKeyDialog()
             AiProvider.OPENAI_COMPATIBLE -> showOpenAiConfigurationDialog()
+        }
+    }
+
+    private fun showChatGptConfiguration() {
+        val session = ChatGptSession(this)
+        if (!session.isConnected) {
+            startActivity(Intent(this, ChatGptSignInActivity::class.java))
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Using ChatGPT plan")
+            .setMessage("Connected as ${session.email}. Requests share your ChatGPT plan's usage limits.")
+            .setPositiveButton("Manage usage") { _, _ -> openLink("https://chatgpt.com/settings/usage") }
+            .setNeutralButton("Sign out") { _, _ ->
+                lifecycleScope.launch {
+                    val revoked = withContext(Dispatchers.IO) { session.disconnect() }
+                    refreshValues()
+                    if (!revoked) Toast.makeText(this@MainActivity,
+                        "Signed out locally. Remote revocation was not confirmed; disconnect Nboard in ChatGPT settings.", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun showChatGptModels() {
+        val session = ChatGptSession(this)
+        if (!session.isConnected) { showChatGptConfiguration(); return }
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { session.models() } }
+            result.onSuccess { models ->
+                if (models.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No models are available for this account", Toast.LENGTH_LONG).show()
+                    return@onSuccess
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("ChatGPT model")
+                    .setSingleChoiceItems(models.map { it.second }.toTypedArray(), models.indexOfFirst { it.first == session.model }) { dialog, index ->
+                        session.selectModel(models[index].first)
+                        refreshValues()
+                        dialog.dismiss()
+                    }.setNegativeButton("Cancel", null).show()
+            }.onFailure { Toast.makeText(this@MainActivity, it.message ?: "Could not load models", Toast.LENGTH_LONG).show() }
         }
     }
 
@@ -379,7 +467,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAiProviderDialog() {
         val providers = AiProvider.entries
-        val labels = arrayOf("Gemini", "Anthropic", "OpenAI-compatible")
+        val labels = arrayOf("Gemini", "Anthropic", "OpenAI-compatible", "ChatGPT plan")
         val current = KeyboardModeSettings.loadAiProvider(this)
         AlertDialog.Builder(this)
             .setTitle("Choose provider")
@@ -426,6 +514,7 @@ class MainActivity : AppCompatActivity() {
                     .setNegativeButton("Cancel", null)
                     .show()
             }
+            AiProvider.CHATGPT -> showChatGptModels()
             AiProvider.OPENAI_COMPATIBLE -> Unit
         }
     }
@@ -563,6 +652,7 @@ class MainActivity : AppCompatActivity() {
             .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
                 KeyboardModeSettings.saveHapticMode(this, modes[which])
                 refreshValues()
+                performKeyboardHaptic(hapticModeValue, modes[which], ContextCompat.getSystemService(this, Vibrator::class.java))
                 dialog.dismiss()
             }
             .setNegativeButton("Cancel", null)
@@ -843,6 +933,7 @@ class MainActivity : AppCompatActivity() {
         val isGboardLayout = activeLayoutPack.isGboardStyle()
         val provider = KeyboardModeSettings.loadAiProvider(this)
         aiProviderValue.text = when (provider) {
+            AiProvider.CHATGPT -> "ChatGPT plan"
             AiProvider.GEMINI -> "Gemini"
             AiProvider.ANTHROPIC -> "Anthropic"
             AiProvider.OPENAI_COMPATIBLE ->
@@ -860,14 +951,22 @@ class MainActivity : AppCompatActivity() {
                 aiModelLabel.text = "Anthropic model"
                 geminiModelValue.text = KeyboardModeSettings.loadAnthropicModel(this).displayName
             }
+            AiProvider.CHATGPT -> {
+                aiModelLabel.text = "ChatGPT model"
+                geminiModelValue.text = ChatGptSession(this).model.ifBlank { "Choose after sign-in" }
+            }
             AiProvider.OPENAI_COMPATIBLE -> Unit
         }
         val configuredKey = when (provider) {
+            AiProvider.CHATGPT -> ""
             AiProvider.GEMINI -> KeyboardModeSettings.loadGeminiApiKey(this)
             AiProvider.ANTHROPIC -> KeyboardModeSettings.loadAnthropicApiKey(this)
             AiProvider.OPENAI_COMPATIBLE -> KeyboardModeSettings.loadOpenAiApiKey(this)
         }
-        statusText.text = maskApiKeyForDisplay(configuredKey)
+        statusText.text = if (provider == AiProvider.CHATGPT) {
+            val session = ChatGptSession(this)
+            if (session.isConnected) "Using ChatGPT plan" else "Continue with ChatGPT"
+        } else maskApiKeyForDisplay(configuredKey)
         languageValue.text = when (KeyboardModeSettings.loadLanguageMode(this)) {
             KeyboardLanguageMode.FRENCH -> "French"
             KeyboardLanguageMode.ENGLISH -> "English"

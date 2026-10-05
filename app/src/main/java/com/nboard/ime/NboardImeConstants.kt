@@ -17,7 +17,7 @@ const val SHIFT_DOUBLE_TAP_TIMEOUT_MS = 320L
 const val AUTO_SHIFT_CONTEXT_WINDOW = 80
 const val AUTOCORRECT_CONTEXT_WINDOW = 40
 const val AUTOCORRECT_SLOW_LOG_THRESHOLD_MS = 50L
-const val PREDICTION_CONTEXT_WINDOW = 280
+const val PREDICTION_CONTEXT_WINDOW = 800
 const val MAX_WORD_PREDICTIONS = 3
 const val MAX_PREDICTION_CANDIDATES = 3
 const val WORD_PREDICTION_SCAN_LIMIT = 2200
@@ -69,10 +69,9 @@ const val AUTOCORRECT_LEARNED_WORD_SKIP_THRESHOLD = 3
 const val AUTOCORRECT_REVERT_LEARN_BOOST = 4
 const val MAX_AUTOCORRECT_VARIANTS = 14
 
-const val MAX_CLIPBOARD_GRID_ITEMS = 4
 const val MAX_RECENT_EMOJIS = 30
 const val AI_PILL_CHAR_LIMIT = 320
-const val AI_REPLY_CHAR_LIMIT = 420
+const val AI_REPLY_CHAR_LIMIT = 4096
 const val VOICE_RESTART_DELAY_MS = 80L
 const val VOICE_RELEASE_GRACE_MS = 220L
 const val VOICE_FINALIZE_FALLBACK_MS = 1400L
@@ -89,5 +88,5 @@ const val AI_PROMPT_SYSTEM_INSTRUCTION =
         "When transforming user text, preserve the original language and do not translate unless the user explicitly asks."
 
 const val AI_QUICK_ACTION_SYSTEM_INSTRUCTION =
-    "You are a concise text-rewrite assistant. Return only the rewritten output without explanation. Keep it brief. " +
+    "You are a precise text editing assistant. Return only the transformed output without explanation. Follow the requested editing task exactly. " +
         "Preserve the original language of the provided text and do not translate unless explicitly requested."
