@@ -13,7 +13,8 @@ internal data class PredictionRequest(
     val trigrams: Map<String, Int> = emptyMap(),
     val lastUsed: Map<String, Long> = emptyMap(),
     val rejected: Map<String, Int> = emptyMap(),
-    val now: Long = System.currentTimeMillis()
+    val now: Long = System.currentTimeMillis(),
+    val phrases: Map<String, Double> = emptyMap()
 )
 
 internal data class PredictionCandidate(val word: String, val score: Double, val correction: Boolean = false,
@@ -21,7 +22,26 @@ internal data class PredictionCandidate(val word: String, val score: Double, val
 internal data class PredictionSignals(val prefix: String, val previous: String, val previousTwo: String,
                                      val hasConfidentPrefix: Boolean = false)
 
+/**
+ * How learned history enters a score. Fitted with tools/nextword-eval/fit_personal.py:
+ * a context-free bonus for often-typed words made next-word suggestions repeat the same
+ * few words ("the", "you", "to") whatever the sentence, and cut top-1 accuracy by a third.
+ */
+internal data class PersonalWeights(
+    /** Times typed, and how recently: only for the user's own vocabulary (rare in the dictionary). */
+    val ownWord: Double, val recency: Double,
+    /** Learned word pairs and triples: personal context. */
+    val pair: Double, val triple: Double
+)
+
 internal object PredictionRanker {
+    /** Next word: history counts only through context, as pairs, triples and phrases. */
+    val NEXT_WORD_PERSONAL = PersonalWeights(ownWord = 0.0, recency = 0.0, pair = .7, triple = 1.8)
+    /** Completing a typed word: the user's own words (names, slang) also count. */
+    val COMPLETION_PERSONAL = PersonalWeights(ownWord = 1.65, recency = 1.8, pair = 2.5, triple = 3.0)
+    /** Dictionary frequency below which a learned word counts as the user's own vocabulary. */
+    const val OWN_VOCABULARY_MAX_FREQUENCY = 2000L
+
     private val diacritics = Regex("\\p{M}+")
     fun fold(word: String): String = Normalizer.normalize(word.lowercase(Locale.US), Normalizer.Form.NFD)
         .replace(diacritics, "").replace('’', '\'')
@@ -54,8 +74,8 @@ internal object PredictionRanker {
     }
 
     fun signals(request: PredictionRequest): PredictionSignals {
-        val previous = Regex("[\\p{L}']+").findAll(request.context.lowercase(Locale.US)).map { it.value }.toList().takeLast(2)
-        return PredictionSignals(fold(request.prefix), previous.lastOrNull().orEmpty(), previous.firstOrNull().orEmpty())
+        val previous = PhraseMemory.sentenceTokens(request.context).takeLast(2)
+        return PredictionSignals(fold(request.prefix), previous.lastOrNull().orEmpty(), previous.getOrNull(previous.lastIndex - 1).orEmpty())
     }
 
     fun score(word: String, frequency: Long, contextFrequency: Long, request: PredictionRequest,
@@ -64,15 +84,17 @@ internal object PredictionRanker {
         val distance = prefixDistance(prefix, foldedWord)
         val one = signals.previous
         val two = signals.previousTwo
-        val count = request.words[word] ?: 0
+        val personal = if (prefix.isEmpty()) NEXT_WORD_PERSONAL else COMPLETION_PERSONAL
+        val ownWord = frequency < OWN_VOCABULARY_MAX_FREQUENCY
+        val count = if (ownWord) request.words[word] ?: 0 else 0
         val ageDays = ((request.now - (request.lastUsed[word] ?: 0L)).coerceAtLeast(0L) / 86_400_000.0)
-        val recency = if (request.lastUsed.containsKey(word)) 1.8 / (1.0 + ageDays / 14.0) else 0.0
+        val recency = if (ownWord && request.lastUsed.containsKey(word)) personal.recency / (1.0 + ageDays / 14.0) else 0.0
         val suppression = request.rejected["${request.prefix.lowercase(Locale.US)}->$word"] ?: 0
         val prior = ln(1.0 + frequency) * .32 + ln(1.0 + contextFrequency) * .48
         val value = prior +
-            ln(1.0 + count) * 1.65 + recency +
-            ln(1.0 + (request.bigrams["$one|$word"] ?: 0)) * 1.4 +
-            ln(1.0 + (request.trigrams["$two|$one|$word"] ?: 0)) * 1.8 -
+            ln(1.0 + count) * personal.ownWord + recency + (request.phrases[word] ?: 0.0) +
+            ln(1.0 + (request.bigrams["$one|$word"] ?: 0)) * personal.pair +
+            ln(1.0 + (request.trigrams["$two|$one|$word"] ?: 0)) * personal.triple -
             distance * (if (signals.hasConfidentPrefix) 12.0 else 5.0) - suppression * 3.5 -
             (if (prefix.isEmpty()) 0.0 else (word.length - prefix.length).coerceAtLeast(0) * .025)
         return PredictionCandidate(word, value, distance > 0, prior)

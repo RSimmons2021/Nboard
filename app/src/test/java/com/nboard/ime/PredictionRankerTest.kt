@@ -29,6 +29,17 @@ class PredictionRankerTest {
         assertTrue(personal.score > generic.score)
         assertTrue(personal.score > PredictionRanker.score("lumen", 1, 0, request.copy(now = request.now+365L*86_400_000)).score)
     }
+    @Test fun oftenTypedWordsDoNotCrowdOutContextAtTheNextWord() {
+        // "the" typed 300 times must not outrank a word that fits "thank you ___".
+        val heavyUser = PredictionRequest("thank you ", "", "ENGLISH", words = mapOf("the" to 300),
+            lastUsed = mapOf("the" to 1_000_000L), now = 1_000_000L)
+        val often = PredictionRanker.score("the", 1000000, 0, heavyUser)
+        val fitting = PredictionRanker.score("very", 10000, 200000, heavyUser)
+        assertTrue(fitting.score > often.score)
+        // A learned pair is personal context and still promotes the user's continuation.
+        val habit = heavyUser.copy(bigrams = mapOf("you|so" to 20))
+        assertTrue(PredictionRanker.score("so", 10000, 0, habit).score > PredictionRanker.score("so", 10000, 0, heavyUser).score)
+    }
     @Test fun rejectionStopsPromotingAnUnwantedCorrection() {
         val request = PredictionRequest("", "teh", "ENGLISH")
         val before = PredictionRanker.score("the", 1000000, 0, request)

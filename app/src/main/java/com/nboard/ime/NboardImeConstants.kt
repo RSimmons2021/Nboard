@@ -11,9 +11,11 @@ const val HOLD_SELECTION_DEADZONE_DP = 10
 const val KEY_PRESS_ANIM_MS = 55L
 const val KEY_RELEASE_ANIM_MS = 70L
 const val KEY_HEIGHT_DP = 54
+/** Letter key label size; Gboard-like legibility on 54 dp keys. Other labels scale from it. */
+const val KEY_LETTER_TEXT_SP = 21f
+const val KEY_SYMBOL_TEXT_SP = 17.5f
 const val KEY_HORIZONTAL_GAP_DP = 2
 const val VARIANT_LONG_PRESS_TIMEOUT_MS = 240L
-const val SHIFT_DOUBLE_TAP_TIMEOUT_MS = 320L
 const val AUTO_SHIFT_CONTEXT_WINDOW = 80
 const val AUTOCORRECT_CONTEXT_WINDOW = 40
 const val AUTOCORRECT_SLOW_LOG_THRESHOLD_MS = 50L
@@ -80,8 +82,15 @@ const val KEY_EMOJI_COUNTS_JSON = "emoji_usage_counts"
 const val KEY_EMOJI_RECENTS_JSON = "emoji_recents"
 const val KEY_AUTOCORRECT_REJECTED_JSON = "autocorrect_rejected"
 const val KEY_LEARNED_WORD_COUNTS_JSON = "learned_word_counts"
+const val KEY_LEARNING_RESET_VERSION = "learning_reset_version"
 const val KEY_LEARNED_BIGRAM_COUNTS_JSON = "learned_bigram_counts"
 const val KEY_LEARNED_TRIGRAM_COUNTS_JSON = "learned_trigram_counts"
+const val KEY_LEARNED_WORD_CASING_JSON = "learned_word_casing"
+const val KEY_EMOJI_TONES_JSON = "emoji_skin_tones"
+/** Phrase records kept (each typed word adds up to 8: four context lengths, global and per app). */
+const val PHRASE_MEMORY_CAPACITY = 65_536
+/** While typing, the phrase table is written at most this often; always when the keyboard closes. */
+const val PHRASE_SAVE_INTERVAL_MS = 5 * 60_000L
 
 const val AI_PROMPT_SYSTEM_INSTRUCTION =
     "You are a concise writing assistant. Reply only with the final text. Keep responses short and practical. " +

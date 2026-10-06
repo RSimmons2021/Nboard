@@ -30,7 +30,8 @@ class ImeWindowTest {
         return null
     }
 
-    private fun waitForPrediction(): PredictionStripView {
+    /** [ready] defaults to any visible row; pass a stricter check when the row must be up to date. */
+    private fun waitForPrediction(ready: (PredictionStripView) -> Boolean = { true }): PredictionStripView {
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
             var result: PredictionStripView? = null
@@ -43,7 +44,7 @@ class ImeWindowTest {
                             dismiss.dispatchTouchEvent(MotionEvent.obtain(now, now + 20, MotionEvent.ACTION_UP, 1f, 1f, 0))
                         }
                     (find(decor) { it is PredictionStripView && it.isShown } as? PredictionStripView)
-                        ?.takeIf { it.words.isNotEmpty() && it.isAttachedToWindow }?.let { result = it }
+                        ?.takeIf { it.words.isNotEmpty() && it.isAttachedToWindow && ready(it) }?.let { result = it }
                 }
             }
             result?.let { return it }
@@ -65,7 +66,8 @@ class ImeWindowTest {
                     input.setText("hel")
                     input.setSelection(input.text.length)
                 }
-                val strip = waitForPrediction()
+                // Taps on a row still showing the previous context are ignored by design; wait for "hel".
+                val strip = waitForPrediction { it.acceptSuggestions && it.words.firstOrNull()?.startsWith("hel", true) == true }
                 val location = IntArray(2)
                 instrumentation.runOnMainSync { strip.getLocationOnScreen(location) }
                 val x = location[0] + strip.width / 2f
@@ -91,7 +93,10 @@ class ImeWindowTest {
                 val clipboard = context.getSystemService(ClipboardManager::class.java)
                 var originalClip: ClipData? = null
                 val synthetic = "Nboard persistent test clip"
-                ClipboardHistoryStore(context).setPinned(synthetic, false)
+                // Run against an empty history: the phone's own pinned clips change the panel layout.
+                val clipboardPrefs = context.getSharedPreferences("nboard_clipboard", android.content.Context.MODE_PRIVATE)
+                val savedHistory = clipboardPrefs.getString("items", null)
+                clipboardPrefs.edit().remove("items").commit()
                 scenario.onActivity {
                     originalClip = clipboard.primaryClip
                     clipboard.setPrimaryClip(ClipData.newPlainText("Keyboard test", synthetic))
@@ -115,7 +120,10 @@ class ImeWindowTest {
                         }
                         SystemClock.sleep(350)
                     }
-                    tap(windowView { it.id == R.id.aiModeButton })
+                    // The user's left mode key is configurable; explicitly open emoji.
+                    instrumentation.runOnMainSync {
+                        NboardImeService.debugInstance!!.get()!!.performBottomModeTap(BottomKeyMode.EMOJI)
+                    }
                     assertTrue(windowView { it.id == R.id.emojiPanel }.isShown)
                     tap(windowView { it.id == R.id.modeSwitchButton })
                     tap(windowView { it.id == R.id.modeSwitchButton })
@@ -149,6 +157,8 @@ class ImeWindowTest {
                     assertTrue(ClipboardHistoryStore(context).getItems().single { it.text == synthetic }.pinned)
                 } finally {
                     scenario.onActivity { if (originalClip != null) clipboard.setPrimaryClip(originalClip!!) else clipboard.clearPrimaryClip() }
+                    SystemClock.sleep(300) // let the keyboard record the restored clip before history is restored
+                    clipboardPrefs.edit().apply { if (savedHistory == null) remove("items") else putString("items", savedHistory) }.commit()
                 }
             }
         } finally {

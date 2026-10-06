@@ -29,6 +29,7 @@ class KeyboardPerformanceDeviceTest {
             val bigrams=service.learnedBigramFrequency.toMap()
             val trigrams=service.learnedTrigramFrequency.toMap()
             val recency=service.learnedWordLastUsed.toMap()
+            val phrases=service.phraseMemory.snapshot()
             val frames=mutableListOf<Double>()
             val calls=mutableListOf<Double>()
             val slowKeys=mutableListOf<String>()
@@ -51,6 +52,7 @@ class KeyboardPerformanceDeviceTest {
                 SystemClock.sleep(400)
                 instrumentation.runOnMainSync {
                     frames.sort(); calls.sort(); assertTrue(frames.isNotEmpty())
+                    assertTrue("Warm key commit exceeded 100ms: ${calls.last()}ms", calls.last() < 100.0)
                     val report="external_editor_frames=${frames.size} frame_p50_ms=${frames[frames.size/2]} frame_p95_ms=${frames[(frames.size*.95).toInt().coerceAtMost(frames.lastIndex)]} commit_p50_ms=${calls[calls.size/2]} commit_p95_ms=${calls[(calls.size*.95).toInt().coerceAtMost(calls.lastIndex)]}"
                     android.util.Log.i("NboardBenchmark",report)
                     java.io.File(instrumentation.targetContext.filesDir,"keyboard-external-frame-benchmark.txt").writeText("$report\nslow_keys_ms=${slowKeys.joinToString()}\n")
@@ -62,6 +64,8 @@ class KeyboardPerformanceDeviceTest {
                     service.learnedBigramFrequency.clear(); service.learnedBigramFrequency.putAll(bigrams)
                     service.learnedTrigramFrequency.clear(); service.learnedTrigramFrequency.putAll(trigrams)
                     service.learnedWordLastUsed.clear(); service.learnedWordLastUsed.putAll(recency)
+                    service.phraseMemory.restore(phrases)
+                    service.phraseMemoryDirty=true
                     service.savePredictionLearning(force=true)
                 }
             }

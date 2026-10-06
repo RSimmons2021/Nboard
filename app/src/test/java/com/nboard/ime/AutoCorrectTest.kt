@@ -2,9 +2,19 @@ package com.nboard.ime
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class AutoCorrectTest {
+    @Test fun recognitionUsesCorrectionVocabularyAndRespectsActiveLanguage() {
+        val engine = AutoCorrect(frenchFrequencies = mapOf("bonjour" to 10), englishFrequencies = mapOf("tomorrow" to 20))
+        assertTrue(engine.isLoadedWord("Tomorrow", KeyboardLanguageMode.ENGLISH))
+        assertFalse(engine.isLoadedWord("tomorow", KeyboardLanguageMode.ENGLISH))
+        assertFalse(engine.isLoadedWord("tomorrow", KeyboardLanguageMode.FRENCH))
+        assertTrue(engine.isLoadedWord("bonjour", KeyboardLanguageMode.BOTH))
+        assertFalse(engine.isLoadedWord("tomorrow", KeyboardLanguageMode.DISABLED))
+    }
     private val englishFrequencies = mapOf(
         "the" to 10_000,
         "you" to 8_000,
@@ -98,18 +108,19 @@ class AutoCorrectTest {
     }
 
     @Test
-    fun bilingualWithoutLanguageHint_prefersHigherFrequencyCandidate() {
+    fun bilingualWithoutLanguageHint_prefersTheLikelierSlipOverTheMoreFrequentWord() {
         val engine = AutoCorrect(
             frenchFrequencies = mapOf("able" to 10_000),
             englishFrequencies = mapOf("apple" to 5_000),
             mode = AutoCorrect.AutoCorrectMode.BILINGUAL
         )
 
-        assertEquals("able", engine.correct("aple", null))
+        // A missed double letter is far likelier than pressing p for b across the keyboard.
+        assertEquals("apple", engine.correct("aple", null))
     }
 
     @Test
-    fun sameFrequencyCandidates_useLexicographicTieBreak() {
+    fun equallyLikelyCandidates_leaveTheWordForTheSuggestionStrip() {
         val engine = AutoCorrect(
             frenchFrequencies = emptyMap(),
             englishFrequencies = mapOf(
@@ -119,6 +130,28 @@ class AutoCorrectTest {
             mode = AutoCorrect.AutoCorrectMode.ENGLISH_ONLY
         )
 
-        assertEquals("heap", engine.correct("hea", null))
+        assertNull(engine.correct("hea", null))
+    }
+
+    @Test
+    fun neighbouringKeySlipsBeatMoreFrequentDistantWords() {
+        val engine = AutoCorrect(
+            frenchFrequencies = emptyMap(),
+            englishFrequencies = mapOf("to" to 50_000, "of" to 60_000, "it" to 40_000, "work" to 9_000, "pork" to 9_500),
+            mode = AutoCorrect.AutoCorrectMode.ENGLISH_ONLY
+        )
+        // o and p are neighbours; w and p are not.
+        assertEquals("work", engine.correct("wprk", null))
+    }
+
+    @Test
+    fun personalContextTipsACloseCall() {
+        val engine = AutoCorrect(
+            frenchFrequencies = emptyMap(),
+            englishFrequencies = mapOf("heap" to 100, "heat" to 100),
+            mode = AutoCorrect.AutoCorrectMode.ENGLISH_ONLY
+        )
+        engine.contextProbability = { previous, word -> if (previous == "the" && word == "heat") 0.05 else null }
+        assertEquals("heat", engine.correct("hea", "the"))
     }
 }

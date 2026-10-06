@@ -23,50 +23,42 @@ internal fun NboardImeService.commitWordPrediction(predictedWord: String) {
     val fragment = extractCurrentWordFragment(beforeCursor)
     val sentenceContext = extractPredictionSentenceContext(beforeCursor)
     val (previousWord2, previousWord1) = extractPreviousWordsForPrediction(sentenceContext, fragment)
+    // With the cursor inside a word ("hel|lo"), the suggestion replaces the whole word.
+    val afterCursor = inputConnection.getTextAfterCursor(PREDICTION_WORD_TAIL_WINDOW, 0)?.toString().orEmpty()
+    val wordTail = afterCursor.takeWhile { isWordChar(it) }
+    val nextChar = afterCursor.getOrNull(wordTail.length)
     inputConnection.beginBatchEdit()
     try {
-        if (fragment.isNotBlank()) inputConnection.deleteSurroundingText(fragment.length, 0)
-        inputConnection.commitText(word, 1)
-        inputConnection.commitText(" ", 1)
+        if (fragment.isNotBlank() || wordTail.isNotEmpty()) {
+            inputConnection.deleteSurroundingText(fragment.length, wordTail.length)
+        }
+        when {
+            // Reuse an existing space so the cursor lands after it without doubling it.
+            nextChar == ' ' -> {
+                inputConnection.deleteSurroundingText(0, 1)
+                inputConnection.commitText("$word ", 1)
+            }
+            nextChar != null && nextChar in PREDICTION_NO_SPACE_BEFORE -> inputConnection.commitText(word, 1)
+            else -> inputConnection.commitText("$word ", 1)
+        }
     } finally {
         inputConnection.endBatchEdit()
     }
     val normalizedWord = normalizeWord(word)
     recordLearnedTransition(previousWord1, normalizedWord, boost = 3)
     recordLearnedTrigram(previousWord2, previousWord1, normalizedWord, boost = 3)
+    phraseWordTouched = true
     learnPredictionFromContext(inputConnection)
     pendingAutoCorrection = null
-    pendingPredictionUndo = PredictionUndo(fragment, word, " ",
-        (minOf(editorSelectionStart, editorSelectionEnd)-fragment.length).coerceAtLeast(0), aiFieldRevision)
     val consumedOneShot = consumeOneShotShiftIfNeeded(word)
     refreshAutoShiftFromContextAndRerender(consumedOneShot)
-}
-
-internal data class PredictionUndo(val fragment: String, val accepted: String, val suffix: String,
-                                   val start: Int, val fieldRevision: Long)
-
-internal fun NboardImeService.tryUndoPrediction(): Boolean {
-    val undo = pendingPredictionUndo ?: return false
-    pendingPredictionUndo = null
-    val connection = currentInputConnection ?: return false
-    val inserted = undo.accepted + undo.suffix
-    if (aiFieldRevision != undo.fieldRevision || editorSelectionStart != undo.start+inserted.length ||
-        editorSelectionEnd != editorSelectionStart) return false
-    if (!connection.getSelectedText(0).isNullOrEmpty() || connection.getTextBeforeCursor(inserted.length, 0)?.toString() != inserted) return false
-    connection.beginBatchEdit()
-    try {
-        connection.deleteSurroundingText(inserted.length, 0)
-        connection.commitText(undo.fragment, 1)
-    } finally { connection.endBatchEdit() }
-    recordRejectedCorrection(undo.fragment, undo.accepted)
-    return true
 }
 
 internal fun NboardImeService.tryRevertLastAutoCorrection(): Boolean {
     val correction = pendingAutoCorrection ?: return false
     val inputConnection = currentInputConnection ?: return false
 
-    val probeSize = correction.correctedWord.length + correction.committedSuffix.length + 8
+    val probeSize = maxOf(correction.correctedWord.length + correction.committedSuffix.length + 8, phraseLearningProbeSize())
     val beforeCursor = inputConnection.getTextBeforeCursor(probeSize, 0)?.toString().orEmpty()
     if (!beforeCursor.endsWith(correction.correctedWord + correction.committedSuffix)) {
         pendingAutoCorrection = null
@@ -83,6 +75,11 @@ internal fun NboardImeService.tryRevertLastAutoCorrection(): Boolean {
     } finally {
         inputConnection.endBatchEdit()
     }
+    retractPhraseLearning(beforeCursor)
+    if (correction.originalWord.equals(correction.correctedWord, ignoreCase = true) && wordCasing.weaken(correction.originalWord)) {
+        wordCasingDirty = true
+    }
+    phraseWordTouched = true
     recordRejectedCorrection(correction.originalWord, correction.correctedWord)
     incrementLearnedWord(correction.originalWord, AUTOCORRECT_REVERT_LEARN_BOOST)
     persistPredictionLearningIfNeeded()
@@ -179,22 +176,38 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
     }
     val beforeCursor = inputConnection.getTextBeforeCursor(AUTOCORRECT_CONTEXT_WINDOW, 0)?.toString().orEmpty()
     val sourceWord = extractTrailingWord(beforeCursor) ?: return null
+    // The word may end before closing punctuation, e.g. "(teh)". Those characters are
+    // re-committed after the correction; any other trailing text leaves the word alone.
+    val trailing = beforeCursor.substring(beforeCursor.lastIndexOf(sourceWord) + sourceWord.length)
+    if (trailing.length > 2 || trailing.any { it !in AUTOCORRECT_CLOSING_PUNCTUATION }) return null
     val normalizedSource = normalizeWord(sourceWord)
-    if (normalizedSource.length < 2) {
+    if (normalizedSource.isEmpty()) {
         return null
     }
-    if (!isKnownWord(normalizedSource)) {
-        val learnedCount = learnedWordFrequency[normalizedSource] ?: 0
-        if (learnedCount >= AUTOCORRECT_LEARNED_WORD_SKIP_THRESHOLD) {
-            return null
-        }
+    // Parts of addresses and paths ("gmial.com", "@nme", "/usr") are not prose.
+    val wordStart = beforeCursor.length - trailing.length - sourceWord.length
+    if (beforeCursor.getOrNull(wordStart - 1) in ADDRESS_SEPARATORS) {
+        return null
     }
+    // A capital typed mid-sentence marks a name ("see Jaxon"); leave it as typed.
+    val beforeWord = beforeCursor.substring(0, wordStart).trimEnd()
+    val sentenceStart = beforeWord.isEmpty() || beforeWord.last() in SMART_TYPING_SENTENCE_ENDERS || beforeWord.last() == '\n'
+    if (!sentenceStart && sourceWord.first().isUpperCase() && sourceWord.drop(1).any { it.isLowerCase() }) {
+        return null
+    }
+    // The user's own words are never replaced by a guess (their capitals still apply): words
+    // typed often, and names they have deliberately capitalised mid-sentence ("Jaxon", not "Jason").
+    val ownWord = (learnedWordFrequency[normalizedSource] ?: 0) >= AUTOCORRECT_LEARNED_WORD_SKIP_THRESHOLD ||
+        wordCasing.preferred(normalizedSource, english = false) != null
 
     val previousWord = extractPreviousWordForAutoCorrection(beforeCursor, sourceWord)
     val contextLanguage = detectContextLanguage(beforeCursor)
-    var suggestion = lookupTypoCorrection(normalizedSource, contextLanguage)
+    var suggestion = if (ownWord) null else lookupTypoCorrection(normalizedSource, contextLanguage)
+    // A recognised word (any loaded word list, texting vocabulary) is never replaced by a
+    // guess; only the explicit typo table above may change it ("untill" -> "until").
+    val known = ownWord || isKnownWord(normalizedSource)
 
-    if (suggestion == null) {
+    if (suggestion == null && !known) {
         autoCorrectEngine.setModeFromKeyboardMode(keyboardLanguageMode)
         val startNanos = SystemClock.elapsedRealtimeNanos()
         suggestion = autoCorrectEngine.correct(normalizedSource, previousWord)
@@ -206,27 +219,42 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
 
     // Recognized words need no broad variant search. Explicit apostrophe typo
     // mappings above still apply (e.g. cant -> can't).
-    if (suggestion == null && !isKnownWord(normalizedSource) && shouldRunDictionaryApostropheFallback(normalizedSource)) {
+    if (suggestion == null && !known && shouldRunDictionaryApostropheFallback(normalizedSource)) {
         suggestion = findBestDictionaryCorrection(normalizedSource, contextLanguage)
     }
-    suggestion = suggestion?.let(::normalizeWord) ?: return null
-    if (!isAutoCorrectionCandidateUsable(normalizedSource, suggestion)) {
+    val english = usesEnglishCasing()
+    suggestion = suggestion?.let(::normalizeWord)
+    if (suggestion == null) {
+        // Capitals only: "i" -> "I", and a name written capitalised at least twice ("jaxon" -> "Jaxon").
+        val cased = wordCasing.preferred(normalizedSource, english, minimumEvidence = 2) ?: return null
+        if (sourceWord.any { it.isUpperCase() } || cased == sourceWord || isCorrectionSuppressed(normalizedSource, cased)) return null
+        return replaceCorrectedWord(inputConnection, sourceWord, cased, trailing)
+    }
+    if (normalizedSource.length < 2 || !isAutoCorrectionCandidateUsable(normalizedSource, suggestion)) {
         return null
     }
     if (isCorrectionSuppressed(normalizedSource, suggestion)) {
         return null
     }
 
-    val correctedWord = applyWordCase(suggestion, sourceWord)
-    if (correctedWord.equals(sourceWord, ignoreCase = true)) {
+    // The user's own capitals and fixed English ones ("im" -> "I'm"), unless typed in capitals.
+    val typedInCaps = sourceWord.length >= 2 && sourceWord.none { it.isLowerCase() }
+    val correctedWord = (if (typedInCaps) null else wordCasing.preferred(suggestion, english, minimumEvidence = 2))
+        ?: applyWordCase(suggestion, sourceWord)
+    if (correctedWord == sourceWord) {
         return null
     }
+    return replaceCorrectedWord(inputConnection, sourceWord, correctedWord, trailing)
+}
 
-    inputConnection.deleteSurroundingText(sourceWord.length, 0)
-    inputConnection.commitText(correctedWord, 1)
+private fun replaceCorrectedWord(inputConnection: InputConnection, sourceWord: String, correctedWord: String,
+                                 trailing: String): AutoCorrectionResult {
+    inputConnection.deleteSurroundingText(sourceWord.length + trailing.length, 0)
+    inputConnection.commitText(correctedWord + trailing, 1)
     return AutoCorrectionResult(
         originalWord = sourceWord,
-        correctedWord = correctedWord
+        correctedWord = correctedWord,
+        trailing = trailing
     )
 }
 
@@ -746,6 +774,8 @@ internal fun NboardImeService.languageBiasPenalty(
 }
 
 internal fun NboardImeService.isKnownWord(word: String): Boolean {
+    if (autoCorrectEngine.isLoadedWord(word, keyboardLanguageMode)) return true
+    if (keyboardLanguageMode != KeyboardLanguageMode.FRENCH && normalizeWord(word) in TEXTING_VOCABULARY) return true
     val folded = foldWord(word)
     if (keyboardLanguageMode != KeyboardLanguageMode.ENGLISH) {
         if (frenchLexicon.words.contains(word) || frenchLexicon.foldedWords.contains(folded)) {

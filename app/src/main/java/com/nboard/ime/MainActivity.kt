@@ -130,15 +130,73 @@ class MainActivity : AppCompatActivity() {
 
     private fun configureCategoryPage() {
         val container = findViewById<LinearLayout>(R.id.settingsContent)
-        val motion = com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
-            text = "Fluid prediction animation"
-            isChecked = KeyboardModeSettings.loadPredictionMotionEnabled(this@MainActivity)
+        // Key pop-up glide between quickly pressed keys: on/off and intensity.
+        val keyCard = findViewById<View>(R.id.hapticModeRow).parent as LinearLayout
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val slideIntensity = com.google.android.material.slider.Slider(this).apply {
+            valueFrom = 0f; valueTo = 100f; stepSize = 10f
+            value = (KeyboardModeSettings.loadKeyPreviewSlideIntensity(this@MainActivity) * 100).toInt().toFloat()
+            isEnabled = KeyboardModeSettings.loadKeyPreviewSlideEnabled(this@MainActivity)
+            contentDescription = "Key pop-up slide intensity"
+            setLabelFormatter { "${it.toInt()}%" }
+            setPadding(pad, 0, pad, 0)
+            addOnChangeListener { _, value, _ -> KeyboardModeSettings.saveKeyPreviewSlideIntensity(this@MainActivity, value / 100f) }
+        }
+        val slideSwitch = com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = "Key pop-up slides between keys"
+            isChecked = KeyboardModeSettings.loadKeyPreviewSlideEnabled(this@MainActivity)
+            setPadding(pad, pad / 2, pad, 0)
             setOnCheckedChangeListener { _, checked ->
-                KeyboardModeSettings.savePredictionMotionEnabled(this@MainActivity, checked)
+                KeyboardModeSettings.saveKeyPreviewSlideEnabled(this@MainActivity, checked)
+                slideIntensity.isEnabled = checked
             }
         }
+        keyCard.addView(slideSwitch)
+        keyCard.addView(android.widget.TextView(this).apply { text = "Slide intensity"; setPadding(pad, pad / 2, pad, 0) })
+        keyCard.addView(slideIntensity)
+
         val correctionCard = findViewById<View>(R.id.wordPredictionRow).parent as LinearLayout
+        val levels = PredictionMotionLevel.entries
+        val motionLabel = android.widget.TextView(this).apply {
+            text = "Suggestion animation: ${KeyboardModeSettings.loadPredictionMotionLevel(this@MainActivity).label}"
+            setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        val motion = com.google.android.material.slider.Slider(this).apply {
+            valueFrom = 0f
+            valueTo = (levels.size - 1).toFloat()
+            stepSize = 1f
+            value = KeyboardModeSettings.loadPredictionMotionLevel(this@MainActivity).ordinal.toFloat()
+            contentDescription = "Suggestion animation intensity"
+            setLabelFormatter { levels[it.toInt()].label }
+            addOnChangeListener { _, value, _ ->
+                val level = levels[value.toInt()]
+                KeyboardModeSettings.savePredictionMotionLevel(this@MainActivity, level)
+                motionLabel.text = "Suggestion animation: ${level.label}"
+            }
+        }
+        correctionCard.addView(motionLabel)
         correctionCard.addView(motion)
+        correctionCard.addView(com.google.android.material.button.MaterialButton(this).apply {
+            text = "Clear learned words and phrases"
+            setOnClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Clear typing history?")
+                    .setMessage("Remove learned words, recurring phrases and correction preferences from this phone.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Clear") { _, _ ->
+                        com.nboard.ime.prediction.PhraseMemoryStorage.clear(this@MainActivity)
+                        val prefs = getSharedPreferences(KeyboardModeSettings.PREFS_NAME, MODE_PRIVATE)
+                        // Queued behind any pending keyboard save, so that save cannot restore old history.
+                        com.nboard.ime.prediction.PhraseMemoryStorage.runOrdered {
+                            prefs.edit()
+                                .remove(KEY_LEARNED_WORD_COUNTS_JSON).remove(KEY_LEARNED_BIGRAM_COUNTS_JSON)
+                                .remove(KEY_LEARNED_TRIGRAM_COUNTS_JSON).remove("learned_word_last_used_json")
+                                .remove(KEY_AUTOCORRECT_REJECTED_JSON).remove(KEY_LEARNED_WORD_CASING_JSON)
+                                .putLong(KEY_LEARNING_RESET_VERSION, System.currentTimeMillis()).commit()
+                        }
+                    }.show()
+            }
+        })
         val section = intent.getStringExtra("section") ?: return
         val selected = when (section) {
             "Preferences" -> setOf("Typing option", "Key settings")

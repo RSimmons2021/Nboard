@@ -61,4 +61,75 @@ class PredictionEngineDeviceTest {
         java.io.File(context.filesDir,"prediction-benchmark.tsv").writeText("$summary\n$report")
         assertTrue(hybridHits > 0)
     }
+    @Test fun nextWordDiscoveryBenchmarkUsesOnlyEmptyPrefixes() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val cases = instrumentation.context.assets.open("next-word-cases.tsv").bufferedReader().readLines()
+        val timings = mutableListOf<Double>()
+        var baselineHits = 0; var upgradedHits = 0; var baselineCoverage = 0; var upgradedCoverage = 0
+        val report = StringBuilder("context\texpected\tbaseline\tupgraded\tms\n")
+        // Separate model instances give both searches the same context-cache conditions.
+        val baselines = LocalPredictionEngine(context).use { engine -> cases.map { line ->
+            val sentence = line.substringBefore('\t')
+            val request = PredictionRequest(sentence, "", "ENGLISH")
+            engine.refine(request, engine.candidates(request), discoverWords = false)
+        } }
+        LocalPredictionEngine(context).use { engine ->
+            cases.forEachIndexed { index, line ->
+                val (sentence, expected) = line.split('\t')
+                val request = PredictionRequest(sentence, "", "ENGLISH")
+                val baseline = baselines[index]
+                val started = System.nanoTime()
+                val local = engine.candidates(request)
+                val upgraded = engine.refine(request, local)
+                val elapsed = (System.nanoTime() - started) / 1_000_000.0
+                if (index > 0) timings += elapsed
+                val oldTop = PredictionRanker.stableTop(baseline, emptyList())
+                val newTop = PredictionRanker.stableTop(upgraded, emptyList())
+                if (expected in oldTop) baselineHits++
+                if (expected in newTop) upgradedHits++
+                if (baseline.any { it.word == expected }) baselineCoverage++
+                if (upgraded.any { it.word == expected }) upgradedCoverage++
+                assertTrue(upgraded.all { it.score.isFinite() && it.word.matches(Regex("[\\p{L}']+")) })
+                report.append(listOf(sentence, expected, oldTop.joinToString(), newTop.joinToString(), elapsed).joinToString("\t")).append('\n')
+            }
+        }
+        timings.sort()
+        val summary = "next_word_cases=${cases.size} baseline_top3=$baselineHits upgraded_top3=$upgradedHits baseline_coverage=$baselineCoverage upgraded_coverage=$upgradedCoverage warm_p50_ms=${timings[timings.size/2]} warm_p95_ms=${timings[(timings.size*.95).toInt().coerceAtMost(timings.lastIndex)]}"
+        java.io.File(context.filesDir, "next-word-benchmark.tsv").writeText("$summary\n$report")
+        Log.i("NboardBenchmark", summary)
+        assertTrue("Discovery must improve candidate coverage", upgradedCoverage > baselineCoverage)
+        assertTrue("Next-word accuracy regressed: $summary", upgradedHits >= baselineHits)
+    }
+    @Test fun cachedSentenceScoresMatchFreshScoresAfterContextChanges() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        LocalPredictionEngine(context).use { engine ->
+            val request = PredictionRequest("i need to charge my ", "pho", "ENGLISH")
+            val local = engine.candidates(request)
+            val fresh = engine.refine(request, local).associate { it.word to it.score }
+            val cached = engine.refine(request, local).associate { it.word to it.score }
+            assertEquals(fresh.keys, cached.keys)
+            fresh.forEach { (word, score) -> assertEquals(score, cached.getValue(word), .0001) }
+            val other = PredictionRequest("thank you very ", "", "ENGLISH")
+            engine.refine(other, engine.candidates(other))
+            val revisited = engine.refine(request, local).associate { it.word to it.score }
+            assertEquals(fresh.keys, revisited.keys)
+            fresh.forEach { (word, score) -> assertEquals(score, revisited.getValue(word), .001) }
+        }
+    }
+    @Test fun repeatedLongPhraseContinuationsSurviveNeuralRanking() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val memory = com.nboard.ime.prediction.PhraseMemory()
+        repeat(6) {
+            memory.record("please collect it at the ", "station", "ENGLISH", "synthetic.app", System.currentTimeMillis())
+            memory.record("please leave it at the ", "office", "ENGLISH", "synthetic.app", System.currentTimeMillis())
+        }
+        LocalPredictionEngine(context).use { engine ->
+            val request = PredictionRequest("please collect it at the ", "", "ENGLISH", words = mapOf("station" to 6, "office" to 6),
+                phrases = memory.suggestions("please collect it at the ", "ENGLISH", "synthetic.app", System.currentTimeMillis()))
+            val local = engine.candidates(request)
+            assertTrue(local.any { it.word == "station" })
+            assertEquals("station", PredictionRanker.stableTop(engine.refine(request, local), emptyList()).first())
+        }
+    }
 }

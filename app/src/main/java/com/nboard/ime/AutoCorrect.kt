@@ -15,7 +15,6 @@ class AutoCorrect(
     private var mode: AutoCorrectMode = AutoCorrectMode.BILINGUAL,
     private val frenchAssetPath: String = "dictionaries/french_50k.txt",
     private val englishAssetPath: String = "dictionaries/english_50k.txt",
-    private val maxEditDistance: Int = 1,
     private val cacheCapacity: Int = 1200
 ) {
     enum class AutoCorrectMode {
@@ -24,8 +23,9 @@ class AutoCorrect(
         BILINGUAL
     }
 
+    /** Frequencies live in the trie only; [size] is the word count. */
     private data class FrequencyDictionary(
-        val frequencies: Map<String, Int>,
+        val size: Int,
         val trie: DictionaryTrie
     ) {
         fun frequency(word: String): Int = trie.frequency(word) ?: 0
@@ -33,17 +33,35 @@ class AutoCorrect(
         fun contains(word: String): Boolean = trie.contains(word)
 
         companion object {
-            fun empty() = FrequencyDictionary(emptyMap(), DictionaryTrie())
+            fun empty() = FrequencyDictionary(0, DictionaryTrie())
         }
     }
 
-    private data class RankedCandidate(
-        val word: String,
-        val frequency: Int,
-        val editDistance: Int
-    )
+    private data class RankedCandidate(val word: String, val score: Double)
 
     private val lock = Any()
+
+    @Volatile
+    private var typoModel = TypoModel()
+    private var keyboardRows: List<String> = TypoModel.QWERTY_ROWS
+
+    /**
+     * P(word | previous word) from the user's own history, or null when unknown.
+     * Set by the keyboard service; read on the correcting thread.
+     */
+    @Volatile
+    var contextProbability: ((previous: String, word: String) -> Double?)? = null
+
+    /** Key geometry for slip costs; call when the letter layout changes (QWERTY, AZERTY, ...). */
+    fun setKeyboardRows(rows: List<String>) {
+        val letters = rows.map { row -> row.lowercase(Locale.ROOT).filter { it.isLetter() } }.filter { it.isNotEmpty() }
+        if (letters.isEmpty() || letters == keyboardRows) return
+        synchronized(lock) {
+            keyboardRows = letters
+            typoModel = TypoModel(letters)
+            correctionCache.clear()
+        }
+    }
 
     @Volatile
     private var loaded = false
@@ -61,14 +79,12 @@ class AutoCorrect(
         frenchFrequencies: Map<String, Int>,
         englishFrequencies: Map<String, Int>,
         mode: AutoCorrectMode = AutoCorrectMode.BILINGUAL,
-        maxEditDistance: Int = 1,
         cacheCapacity: Int = 1200
     ) : this(
         context = null,
         mode = mode,
         frenchAssetPath = "",
         englishAssetPath = "",
-        maxEditDistance = maxEditDistance,
         cacheCapacity = cacheCapacity
     ) {
         synchronized(lock) {
@@ -83,6 +99,14 @@ class AutoCorrect(
         ensureLoaded()
     }
 
+    /** Nonblocking recognition from the same dictionaries used for correction. */
+    internal fun isLoadedWord(word: String, language: KeyboardLanguageMode): Boolean {
+        if (!loaded || language == KeyboardLanguageMode.DISABLED) return false
+        val normalized = normalizeWord(word)
+        return (language != KeyboardLanguageMode.FRENCH && englishDictionary.contains(normalized)) ||
+            (language != KeyboardLanguageMode.ENGLISH && frenchDictionary.contains(normalized))
+    }
+
     fun setMode(newMode: AutoCorrectMode) {
         synchronized(lock) {
             if (mode == newMode) {
@@ -90,6 +114,8 @@ class AutoCorrect(
             }
             mode = newMode
             correctionCache.clear()
+            // Load (or release) dictionaries for the new language on the next correction.
+            if (context != null) loaded = false
         }
     }
 
@@ -121,15 +147,16 @@ class AutoCorrect(
             }
         }
 
+        val previous = previousWord?.let(::normalizeWord)?.takeIf { it.isNotBlank() }
         val suggestion = when (activeMode) {
             AutoCorrectMode.FRENCH_ONLY ->
-                findBestSuggestion(normalizedWord, frenchDictionary, FRENCH_ALPHABET)
+                findBestSuggestion(normalizedWord, frenchDictionary, previous)
 
             AutoCorrectMode.ENGLISH_ONLY ->
-                findBestSuggestion(normalizedWord, englishDictionary, ENGLISH_ALPHABET)
+                findBestSuggestion(normalizedWord, englishDictionary, previous)
 
             AutoCorrectMode.BILINGUAL ->
-                correctBilingual(normalizedWord, hint)
+                correctBilingual(normalizedWord, hint, previous)
         }
 
         val result = suggestion?.takeIf { it != normalizedWord }
@@ -139,148 +166,43 @@ class AutoCorrect(
         return result
     }
 
-    private fun correctBilingual(word: String, hint: BilingualLanguageHint): String? {
+    private fun correctBilingual(word: String, hint: BilingualLanguageHint, previous: String?): String? {
         if (frenchDictionary.contains(word) || englishDictionary.contains(word)) {
             return null
         }
 
         return when (hint) {
-            BilingualLanguageHint.FRENCH -> {
-                findBestSuggestion(word, frenchDictionary, FRENCH_ALPHABET)
-                    ?: findBestSuggestion(word, englishDictionary, ENGLISH_ALPHABET)
-            }
+            BilingualLanguageHint.FRENCH ->
+                findBestSuggestion(word, frenchDictionary, previous) ?: findBestSuggestion(word, englishDictionary, previous)
 
-            BilingualLanguageHint.ENGLISH -> {
-                findBestSuggestion(word, englishDictionary, ENGLISH_ALPHABET)
-                    ?: findBestSuggestion(word, frenchDictionary, FRENCH_ALPHABET)
-            }
+            BilingualLanguageHint.ENGLISH ->
+                findBestSuggestion(word, englishDictionary, previous) ?: findBestSuggestion(word, frenchDictionary, previous)
 
             BilingualLanguageHint.UNKNOWN -> {
-                val french = findBestCandidate(word, frenchDictionary, FRENCH_ALPHABET)
-                val english = findBestCandidate(word, englishDictionary, ENGLISH_ALPHABET)
-                when {
-                    french == null -> english?.word
-                    english == null -> french.word
-                    french.frequency == english.frequency -> {
-                        if (french.editDistance <= english.editDistance) french.word else english.word
-                    }
-
-                    french.frequency > english.frequency -> french.word
-                    else -> english.word
-                }
+                val french = findBestCandidate(word, frenchDictionary, previous)
+                val english = findBestCandidate(word, englishDictionary, previous)
+                listOfNotNull(french, english).maxByOrNull { it.score }?.word
             }
         }?.takeIf { it != word }
     }
 
-    private fun findBestSuggestion(
-        word: String,
-        dictionary: FrequencyDictionary,
-        alphabet: CharArray
-    ): String? {
+    private fun findBestSuggestion(word: String, dictionary: FrequencyDictionary, previous: String?): String? {
         if (dictionary.contains(word)) {
             return null
         }
-        return findBestCandidate(word, dictionary, alphabet)?.word
+        return findBestCandidate(word, dictionary, previous)?.word
     }
 
-    private fun findBestCandidate(
-        word: String,
-        dictionary: FrequencyDictionary,
-        alphabet: CharArray
-    ): RankedCandidate? {
-        var best: RankedCandidate? = null
-        edits1(word, alphabet).forEach { candidate ->
-            val frequency = dictionary.frequency(candidate)
-            if (frequency <= 0) {
-                return@forEach
-            }
-            val ranked = RankedCandidate(
-                word = candidate,
-                frequency = frequency,
-                editDistance = 1
-            )
-            if (isBetterCandidate(ranked, best)) {
-                best = ranked
-            }
-        }
-
-        if (best != null) {
-            return best
-        }
-
-        // Distance-2 is intentionally disabled for real-time keyboard performance.
-        if (maxEditDistance <= 1) {
-            return null
-        }
-
-        return null
-    }
-
-    private fun isBetterCandidate(incoming: RankedCandidate, current: RankedCandidate?): Boolean {
-        if (current == null) {
-            return true
-        }
-        if (incoming.frequency != current.frequency) {
-            return incoming.frequency > current.frequency
-        }
-        if (incoming.editDistance != current.editDistance) {
-            return incoming.editDistance < current.editDistance
-        }
-        if (incoming.word.length != current.word.length) {
-            return incoming.word.length < current.word.length
-        }
-        return incoming.word < current.word
-    }
-
-    private fun edits1(word: String, alphabet: CharArray): Set<String> {
-        if (word.isBlank() || word.length > MAX_WORD_LENGTH) {
-            return emptySet()
-        }
-
-        val edits = LinkedHashSet<String>(word.length * (alphabet.size * 2 + 8))
-
-        // Deletions.
-        for (index in word.indices) {
-            val candidate = word.removeRange(index, index + 1)
-            if (candidate.length in MIN_WORD_LENGTH..MAX_WORD_LENGTH) {
-                edits.add(candidate)
-            }
-        }
-
-        // Transpositions.
-        for (index in 0 until word.length - 1) {
-            val chars = word.toCharArray()
-            val current = chars[index]
-            chars[index] = chars[index + 1]
-            chars[index + 1] = current
-            edits.add(String(chars))
-        }
-
-        // Replacements.
-        for (index in word.indices) {
-            val chars = word.toCharArray()
-            alphabet.forEach { letter ->
-                if (letter == chars[index]) {
-                    return@forEach
-                }
-                chars[index] = letter
-                edits.add(String(chars))
-            }
-        }
-
-        // Insertions.
-        for (index in 0..word.length) {
-            val left = word.substring(0, index)
-            val right = word.substring(index)
-            alphabet.forEach { letter ->
-                val candidate = left + letter + right
-                if (candidate.length in MIN_WORD_LENGTH..MAX_WORD_LENGTH) {
-                    edits.add(candidate)
-                }
-            }
-        }
-
-        return edits
+    /**
+     * Keyboard-aware noisy-channel choice (see [NoisyChannelCorrector]): word frequency and
+     * personal context against key-geometry slip costs, up to two slips. Null keeps the word.
+     */
+    private fun findBestCandidate(word: String, dictionary: FrequencyDictionary, previous: String?): RankedCandidate? {
+        val corrector = NoisyChannelCorrector(dictionary.trie, typoModel, CORRECTION_PARAMS)
+        val context = contextProbability
+        val ranked = corrector.rank(word, previous, context)
+        val chosen = corrector.correct(word, previous, context, ranked.map { it.first }) ?: return null
+        return RankedCandidate(chosen, ranked.first { it.first.word == chosen }.second)
     }
 
     private fun languageHint(previousWord: String?): BilingualLanguageHint {
@@ -307,8 +229,19 @@ class AutoCorrect(
                 return
             }
 
-            frenchDictionary = loadFrequencyDictionary(frenchAssetPath)
-            englishDictionary = loadFrequencyDictionary(englishAssetPath)
+            // Only the active language(s) stay in memory: each dictionary is a 50k-word tree.
+            val needEnglish = mode != AutoCorrectMode.FRENCH_ONLY
+            val needFrench = mode != AutoCorrectMode.ENGLISH_ONLY
+            englishDictionary = when {
+                !needEnglish -> FrequencyDictionary.empty()
+                englishDictionary.size == 0 -> loadFrequencyDictionary(englishAssetPath)
+                else -> englishDictionary
+            }
+            frenchDictionary = when {
+                !needFrench -> FrequencyDictionary.empty()
+                frenchDictionary.size == 0 -> loadFrequencyDictionary(frenchAssetPath)
+                else -> frenchDictionary
+            }
             correctionCache.clear()
             loaded = true
         }
@@ -366,8 +299,9 @@ class AutoCorrect(
         frequencies.forEach { (word, frequency) ->
             trie.insert(word, frequency)
         }
+        trie.freeze()
         return FrequencyDictionary(
-            frequencies = frequencies,
+            size = frequencies.size,
             trie = trie
         )
     }
@@ -392,8 +326,10 @@ class AutoCorrect(
         private val WHITESPACE_REGEX = Regex("\\s+")
         private val WORD_PATTERN = Regex("[a-zàâäæçéèêëîïôöùûüÿœ]+(?:['-][a-zàâäæçéèêëîïôöùûüÿœ]+)*")
 
-        private val ENGLISH_ALPHABET = "abcdefghijklmnopqrstuvwxyz'".toCharArray()
-        private val FRENCH_ALPHABET = "abcdefghijklmnopqrstuvwxyzàâäæçéèêëîïôöùûüÿœ'".toCharArray()
+        /** Tuned with SpellCorrectionBenchmark: precision first; near misses stay as suggestions. */
+        internal val CORRECTION_PARAMS = NoisyChannelCorrector.Params(
+            costWeight = 2.0, contextWeight = 1.0, keepTypedPrior = 3.5, margin = 1.5
+        )
 
         private val FRENCH_INDICATORS = setOf(
             "je", "tu", "il", "elle", "nous", "vous", "le", "la", "les", "un", "une", "des",

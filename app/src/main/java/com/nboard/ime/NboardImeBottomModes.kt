@@ -71,9 +71,6 @@ internal fun NboardImeService.switchQuickLanguageProfile() {
     predictionRenderCache = null
     hasPredictionSuggestions = false
     pendingAutoCorrection = null
-    if (isBigramPredictorInitialized()) {
-        bigramPredictor.setModeFromKeyboardMode(keyboardLanguageMode)
-    }
     autoCorrectEngine.setModeFromKeyboardMode(keyboardLanguageMode)
     reloadBottomModesFromSettings()
     renderKeyRows()
@@ -151,7 +148,8 @@ internal fun NboardImeService.refreshUi(beforeCursor: String? = null) {
 
     modeSwitchButton.text = if (isNumbersMode || isEmojiMode) "ABC" else "123"
     emojiSearchPill.isVisible = isEmojiMode && isEmojiSearchMode
-    emojiSuggestionsScroll.isVisible = isEmojiMode && isEmojiSearchMode
+    emojiSuggestionsScroll.isVisible = isEmojiMode
+    emojiMostUsedLabel.isVisible = isEmojiMode && (!isEmojiSearchMode || emojiSearchInput.text.isNullOrBlank())
     emojiGridScroll.isVisible = isEmojiMode && !isEmojiSearchMode
 
     if (gboardLayout) {

@@ -32,6 +32,12 @@ internal fun hapticEffectSpec(mode: HapticMode): HapticEffectSpec? {
     }
 }
 
+/** Commits keys still held by other fingers, oldest first, so overlapping taps keep press order. */
+internal fun NboardImeService.commitHeldKeys(except: View) {
+    if (heldKeyCommits.isEmpty()) return
+    heldKeyCommits.keys.filter { it !== except }.forEach { view -> heldKeyCommits.remove(view)?.invoke() }
+}
+
 internal fun NboardImeService.bindPressAction(view: View, onTap: () -> Unit) {
     configureKeyTouch(view, repeatOnHold = false, longPressAction = null, tapOnDown = false, onTap = onTap)
 }
@@ -45,6 +51,7 @@ internal fun NboardImeService.configureSpacebarTouch() {
     var cursorDragEnabled = false
     var cursorModeActive = false
     var baseAlpha = 1f
+    var committedEarly = false
     val stepPx = dp(SPACEBAR_CURSOR_STEP_DP).toFloat()
     val deadzonePx = dp(SPACEBAR_CURSOR_DEADZONE_DP).toFloat()
 
@@ -55,6 +62,8 @@ internal fun NboardImeService.configureSpacebarTouch() {
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                commitHeldKeys(except = touchedView)
+                committedEarly = false
                 cursorDragEnabled = !isAiPromptInputActive() && !isEmojiSearchInputActive() && !isClipboardOpen
                 cursorModeActive = false
                 lastRawX = event.rawX
@@ -73,11 +82,16 @@ internal fun NboardImeService.configureSpacebarTouch() {
                     .setDuration(KEY_PRESS_ANIM_MS)
                     .start()
                 performKeyHaptic(touchedView)
+                // A letter pressed before the thumb leaves space still follows the space.
+                heldKeyCommits[touchedView] = {
+                    committedEarly = true
+                    if (!movedCursor && !cursorModeActive) handleSpaceTap()
+                }
                 true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (cursorDragEnabled) {
+                if (cursorDragEnabled && !committedEarly) {
                     if (!cursorModeActive) {
                         val totalDx = event.rawX - downRawX
                         val totalDy = event.rawY - downRawY
@@ -118,13 +132,17 @@ internal fun NboardImeService.configureSpacebarTouch() {
                     .setDuration(KEY_RELEASE_ANIM_MS)
                     .start()
 
-                if (!movedCursor) {
+                heldKeyCommits.remove(touchedView)
+                if (!movedCursor && !committedEarly) {
                     handleSpaceTap()
                 }
+                committedEarly = false
                 true
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                heldKeyCommits.remove(touchedView)
+                committedEarly = false
                 touchedView.isPressed = false
                 touchedView.alpha = baseAlpha
                 touchedView.animate().cancel()
@@ -198,6 +216,23 @@ internal fun NboardImeService.configureKeyTouch(
     var repeatRunnable: Runnable? = null
     var longPressRunnable: Runnable? = null
     var swipeActiveForThisPointer = false
+    // Set when a later finger committed this key early; its release then does nothing.
+    var committedEarly = false
+
+    fun commitNow(touchedView: View) {
+        repeatRunnable?.let { touchedView.removeCallbacks(it) }
+        repeatRunnable = null
+        longPressRunnable?.let { touchedView.removeCallbacks(it) }
+        longPressRunnable = null
+        keyPressPreview.hide(touchedView)
+        if (longPressTriggered) return
+        committedEarly = true
+        if (swipeActiveForThisPointer) {
+            swipeActiveForThisPointer = false
+            if (activeSwipeTypingSession?.ownerView === touchedView && finishSwipeTypingAndCommit()) return
+        }
+        if (!repeatOnHold && !tapOnDown) onTap()
+    }
 
     view.setOnTouchListener { touchedView, event ->
         if (!touchedView.isEnabled) {
@@ -206,6 +241,8 @@ internal fun NboardImeService.configureKeyTouch(
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                commitHeldKeys(except = touchedView)
+                committedEarly = false
                 currentRawX = event.rawX
                 currentRawY = event.rawY
                 longPressStartX = event.rawX
@@ -258,13 +295,14 @@ internal fun NboardImeService.configureKeyTouch(
                 } else if (tapOnDown) {
                     onTap()
                 }
+                heldKeyCommits[touchedView] = { commitNow(touchedView) }
                 true
             }
 
             MotionEvent.ACTION_MOVE -> {
                 currentRawX = event.rawX
                 currentRawY = event.rawY
-                if (swipeActiveForThisPointer) {
+                if (swipeActiveForThisPointer && activeSwipeTypingSession?.ownerView === touchedView) {
                     val isSwipingNow = updateSwipeTyping(currentRawX, currentRawY)
                     if (isSwipingNow) {
                         keyPressPreview.hide(touchedView)
@@ -289,6 +327,7 @@ internal fun NboardImeService.configureKeyTouch(
             }
 
             MotionEvent.ACTION_UP -> {
+                heldKeyCommits.remove(touchedView)
                 keyPressPreview.hide(touchedView)
                 touchedView.isPressed = false
                 touchedView.alpha = baseAlpha
@@ -303,6 +342,10 @@ internal fun NboardImeService.configureKeyTouch(
                 repeatRunnable = null
                 longPressRunnable?.let { touchedView.removeCallbacks(it) }
                 longPressRunnable = null
+                if (committedEarly) {
+                    committedEarly = false
+                    return@setOnTouchListener true
+                }
 
                 if (swipeActiveForThisPointer && !longPressTriggered) {
                     swipeActiveForThisPointer = false
@@ -331,6 +374,8 @@ internal fun NboardImeService.configureKeyTouch(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                heldKeyCommits.remove(touchedView)
+                committedEarly = false
                 keyPressPreview.hide(touchedView)
                 touchedView.isPressed = false
                 touchedView.alpha = baseAlpha

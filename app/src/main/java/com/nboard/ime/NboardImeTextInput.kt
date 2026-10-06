@@ -9,52 +9,34 @@ internal fun NboardImeService.isShiftActive(): Boolean {
 }
 
 internal fun NboardImeService.handleShiftTap() {
-    val now = System.currentTimeMillis()
-    val isDoubleTap = lastShiftTapAtMs != 0L && (now - lastShiftTapAtMs) <= SHIFT_DOUBLE_TAP_TIMEOUT_MS
-
     when {
         manualShiftMode == ShiftMode.CAPS_LOCK -> {
             manualShiftMode = ShiftMode.OFF
-            lastShiftTapAtMs = 0L
+            shiftTapArmed = false
             refreshAutoShiftFromContext()
         }
-
-        manualShiftMode == ShiftMode.OFF && isAutoShiftEnabled -> {
-            if (isDoubleTap) {
-                manualShiftMode = ShiftMode.CAPS_LOCK
-                isAutoShiftEnabled = false
-                lastShiftTapAtMs = 0L
-            } else {
-                isAutoShiftEnabled = false
-                manualShiftMode = ShiftMode.OFF
-                lastShiftTapAtMs = now
-            }
-        }
-
-        isDoubleTap -> {
+        shiftTapArmed -> {
             manualShiftMode = ShiftMode.CAPS_LOCK
             isAutoShiftEnabled = false
-            lastShiftTapAtMs = 0L
+            shiftTapArmed = false
         }
-
-        manualShiftMode == ShiftMode.ONE_SHOT -> {
+        isShiftActive() -> {
             manualShiftMode = ShiftMode.OFF
-            lastShiftTapAtMs = now
-            refreshAutoShiftFromContext()
+            isAutoShiftEnabled = false
+            shiftTapArmed = true
         }
-
         else -> {
             manualShiftMode = ShiftMode.ONE_SHOT
             isAutoShiftEnabled = false
-            lastShiftTapAtMs = now
+            shiftTapArmed = true
         }
     }
 }
 
 internal fun NboardImeService.consumeOneShotShiftIfNeeded(committedText: String): Boolean {
+    if (committedText.isNotEmpty()) shiftTapArmed = false
     if (manualShiftMode == ShiftMode.ONE_SHOT && committedText.any { it.isLetter() }) {
         manualShiftMode = ShiftMode.OFF
-        lastShiftTapAtMs = 0L
         return true
     }
     return false
@@ -123,8 +105,8 @@ internal fun NboardImeService.commitSwipeWord(word: String) {
     val normalizedWord = normalizeWord(word)
     val commitWord = when {
         manualShiftMode == ShiftMode.CAPS_LOCK -> normalizedWord.uppercase(Locale.US)
-        isShiftActive() -> normalizedWord.replaceFirstChar { it.uppercase(Locale.US) }
-        else -> normalizedWord
+        else -> wordCasing.preferred(normalizedWord, usesEnglishCasing())
+            ?: if (isShiftActive()) normalizedWord.replaceFirstChar { it.uppercase(Locale.US) } else normalizedWord
     }
 
     inputConnection.beginBatchEdit()
@@ -137,6 +119,7 @@ internal fun NboardImeService.commitSwipeWord(word: String) {
 
     recordLearnedTransition(previousWord1, normalizedWord, boost = 2)
     recordLearnedTrigram(previousWord2, previousWord1, normalizedWord, boost = 2)
+    phraseWordTouched = true
     learnPredictionFromContext(inputConnection)
     pendingAutoCorrection = null
     val consumedOneShot = consumeOneShotShiftIfNeeded(commitWord)
@@ -146,6 +129,7 @@ internal fun NboardImeService.commitSwipeWord(word: String) {
 internal fun NboardImeService.deleteOneCharacter() {
     if (!isAiPromptInputActive()) aiUndo = null
     pendingAutoInsertedSentenceSpace = false
+    autoSpacedPeriod = false
     if (isAiPromptInputActive()) {
         val editable = aiPromptInput.text
         val start = aiPromptInput.selectionStart
@@ -172,7 +156,7 @@ internal fun NboardImeService.deleteOneCharacter() {
         }
         return
     }
-    if (tryUndoPrediction() || tryRevertLastAutoCorrection()) {
+    if (tryRevertLastAutoCorrection()) {
         refreshAutoShiftFromContextAndRerender()
         return
     }
@@ -189,13 +173,17 @@ internal fun NboardImeService.deleteOneCharacter() {
 
 internal fun NboardImeService.deletePreviousGrapheme(inputConnection: InputConnection) {
     val beforeCursor = inputConnection
-        .getTextBeforeCursor(GRAPHEME_DELETE_CONTEXT_WINDOW, 0)
+        .getTextBeforeCursor(maxOf(GRAPHEME_DELETE_CONTEXT_WINDOW, phraseLearningProbeSize()), 0)
         ?.toString()
         .orEmpty()
     if (beforeCursor.isEmpty()) {
         return
     }
 
+    if (isWordChar(beforeCursor.last())) {
+        retractPhraseLearning(beforeCursor)
+        phraseWordTouched = true
+    }
     val charsToDelete = previousGraphemeSize(beforeCursor)
     inputConnection.deleteSurroundingText(charsToDelete, 0)
 }
@@ -222,7 +210,6 @@ internal fun NboardImeService.previousGraphemeSize(text: String): Int {
 
 internal fun NboardImeService.commitKeyText(text: String) {
     if (!isAiPromptInputActive()) aiUndo = null
-    if (!isAiPromptInputActive()) pendingPredictionUndo = null
     if (isAiPromptInputActive()) {
         appendPromptText(text)
         return
@@ -233,12 +220,16 @@ internal fun NboardImeService.commitKeyText(text: String) {
     }
 
     val inputConnection = currentInputConnection ?: return
+    if (text.any { it.isLetter() }) phraseWordTouched = true
     val committedChar = text.singleOrNull()
     val needsPunctuationContext = committedChar in SMART_TYPING_SENTENCE_ENDERS &&
         (pendingAutoInsertedSentenceSpace ||
             autoSpaceAfterPunctuationEnabled && smartTypingBehavior.shouldAutoSpaceAndCapitalize())
     // Ordinary letters do not need three synchronous round trips to the editor.
-    var beforeCursorText = if (needsPunctuationContext) inputConnection.getTextBeforeCursor(3, 0)?.toString().orEmpty() else ""
+    // A period also needs the current token, to recognise web and email addresses.
+    var beforeCursorText = if (needsPunctuationContext) {
+        inputConnection.getTextBeforeCursor(if (committedChar == '.') ADDRESS_CONTEXT_WINDOW else 3, 0)?.toString().orEmpty()
+    } else ""
     val hasSelection = needsPunctuationContext && !inputConnection.getSelectedText(0).isNullOrEmpty()
     if (committedChar != null &&
         committedChar in SMART_TYPING_SENTENCE_ENDERS &&
@@ -260,16 +251,25 @@ internal fun NboardImeService.commitKeyText(text: String) {
     val nextChar = if (needsPunctuationContext) inputConnection.getTextAfterCursor(1, 0)?.toString()?.firstOrNull() else null
     var autoCorrection: AutoCorrectionResult? = null
     var committedSuffix = text
+    val periodSpaceToCheck = autoSpacedPeriod
+    if (committedChar == null || !committedChar.isLetterOrDigit()) autoSpacedPeriod = false
     inputConnection.beginBatchEdit()
     try {
+        if (periodSpaceToCheck && committedChar != null && AUTOCORRECT_TRIGGER_DELIMITERS.contains(committedChar)) {
+            joinDomainAfterAutoSpace(inputConnection)
+        }
         if (text.length == 1 && AUTOCORRECT_TRIGGER_DELIMITERS.contains(text[0])) {
-            autoCorrection = applyAutoCorrectionBeforeDelimiter(inputConnection)
+            android.os.Trace.beginSection("nboard.autocorrect")
+            try { autoCorrection = applyAutoCorrectionBeforeDelimiter(inputConnection) }
+            finally { android.os.Trace.endSection() }
+            autoCorrection?.let { committedSuffix = it.trailing + committedSuffix }
         }
 
         inputConnection.commitText(text, 1)
         if (committedChar != null &&
             !hasSelection &&
             autoSpaceAfterPunctuationEnabled &&
+            !(committedChar == '.' && isTypingAddress(beforeCursorText)) &&
             smartTypingBehavior.shouldAutoSpaceAfterChar(
                 char = committedChar,
                 previousChar = previousChar,
@@ -280,9 +280,12 @@ internal fun NboardImeService.commitKeyText(text: String) {
             inputConnection.commitText(" ", 1)
             committedSuffix += " "
             pendingAutoInsertedSentenceSpace = true
+            autoSpacedPeriod = committedChar == '.'
         }
         if (text.length == 1 && AUTOCORRECT_TRIGGER_DELIMITERS.contains(text[0])) {
-            learnPredictionFromContext(inputConnection)
+            android.os.Trace.beginSection("nboard.learning")
+            try { learnPredictionFromContext(inputConnection) }
+            finally { android.os.Trace.endSection() }
         }
     } finally {
         inputConnection.endBatchEdit()
@@ -313,4 +316,24 @@ internal fun NboardImeService.appendEmojiSearchText(text: String) {
     val editable = emojiSearchInput.text ?: return
     editable.append(text)
     emojiSearchInput.setSelection(editable.length)
+}
+
+private val DOMAIN_AFTER_AUTO_SPACE = Regex("[\\p{L}\\d-]\\. (com|org|net|io|edu|gov)$", RegexOption.IGNORE_CASE)
+
+/** The token before a period is part of an address, e.g. "me@mail" or "www.site". */
+internal fun isTypingAddress(beforeCursor: String): Boolean {
+    val token = beforeCursor.takeLastWhile { !it.isWhitespace() }.lowercase(Locale.US)
+    return '@' in token || token.startsWith("www") || token.startsWith("http") || '/' in token
+}
+
+/**
+ * "google.com" typed in a sentence received an automatic space after its period.
+ * Once the next word is a common domain ending, join it back: "google. Com" -> "google.com".
+ */
+internal fun NboardImeService.joinDomainAfterAutoSpace(inputConnection: InputConnection) {
+    val before = inputConnection.getTextBeforeCursor(8, 0)?.toString() ?: return
+    val match = DOMAIN_AFTER_AUTO_SPACE.find(before) ?: return
+    val ending = match.groupValues[1]
+    inputConnection.deleteSurroundingText(ending.length + 1, 0)
+    inputConnection.commitText(ending.lowercase(Locale.US), 1)
 }

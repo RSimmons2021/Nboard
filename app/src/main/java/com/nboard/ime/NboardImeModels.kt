@@ -93,7 +93,9 @@ internal data class DictionaryCorrectionCandidate(
 
 internal data class AutoCorrectionResult(
     val originalWord: String,
-    val correctedWord: String
+    val correctedWord: String,
+    /** Closing punctuation between the word and the cursor, kept after the correction. */
+    val trailing: String = ""
 )
 
 internal data class AutoCorrectionUndo(

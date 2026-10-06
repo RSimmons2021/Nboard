@@ -5,10 +5,10 @@ import android.icu.lang.UCharacter
 import android.icu.lang.UProperty
 import android.text.Editable
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import androidx.appcompat.widget.AppCompatButton
-import androidx.core.view.isVisible
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -37,26 +37,6 @@ internal fun NboardImeService.renderEmojiGrid() {
     if (!isEmojiGridInitialized()) {
         return
     }
-    emojiRecentColumn.removeAllViews()
-
-    val recentColumn = (emojiRecents + DEFAULT_TOP_EMOJIS)
-        .distinct()
-        .take(3)
-
-    recentColumn.forEachIndexed { index, emoji ->
-        emojiRecentColumn.addView(
-            buildEmojiGridKey(
-                emoji = emoji,
-                widthDp = 52,
-                heightDp = 42,
-                marginEndDp = 0,
-                marginBottomDp = if (index < recentColumn.lastIndex) 4 else 0
-            )
-        )
-    }
-
-    emojiRecentDivider.isVisible = recentColumn.isNotEmpty()
-
     if (emojiGridLoadedCount <= 0 ||
         emojiGridLoadedCount > allEmojiCatalog.size ||
         emojiGridRow1.childCount == 0 && emojiGridRow2.childCount == 0 && emojiGridRow3.childCount == 0
@@ -93,15 +73,25 @@ internal fun NboardImeService.buildEmojiGridKey(
     marginEndDp: Int = 4,
     marginBottomDp: Int = 0
 ): AppCompatButton {
+    // Shown and inserted in the skin tone last chosen for this emoji.
+    val shown = preferredEmojiTone(emoji)
     return AppCompatButton(this).apply {
-        text = emoji
+        text = shown
         setAllCaps(false)
-        textSize = 18f
+        textSize = 24f
         background = uiDrawable(R.drawable.bg_key)
         setTextColor(uiColor(R.color.key_text))
         gravity = Gravity.CENTER
         flattenView(this)
-        bindPressAction(this) { onEmojiChosen(emoji) }
+        configureKeyTouch(
+            view = this,
+            repeatOnHold = false,
+            longPressAction = if (EmojiTones.supportsTones(emoji)) { anchor, rawX, rawY ->
+                showEmojiTonePopup(anchor, emoji, rawX, rawY)
+            } else null,
+            tapOnDown = false,
+            onTap = { onEmojiChosen(preferredEmojiTone(emoji)) }
+        )
         layoutParams = LinearLayout.LayoutParams(dp(widthDp), dp(heightDp)).also {
             if (marginEndDp > 0) {
                 it.marginEnd = dp(marginEndDp)
@@ -114,38 +104,29 @@ internal fun NboardImeService.buildEmojiGridKey(
 }
 
 internal fun NboardImeService.renderEmojiSuggestions() {
-    if (!isEmojiMostUsedRowInitialized()) {
+    if (!isEmojiMostUsedRowInitialized() || !isEmojiMode) {
         return
     }
-    emojiMostUsedRow.removeAllViews()
-    if (!isEmojiSearchMode) {
-        return
-    }
-
-    val query = emojiSearchInput.text?.toString()?.trim().orEmpty()
+    val query = if (isEmojiSearchMode) emojiSearchInput.text?.toString()?.trim().orEmpty() else ""
     val candidates = if (query.isBlank()) {
-        (emojiRecents + DEFAULT_TOP_EMOJIS).distinct()
+        mostUsedEmojis(emojiUsageCounts, DEFAULT_TOP_EMOJIS)
     } else {
-        filterEmojiCandidates(emojiSearchInput.text)
-    }.take(MAX_EMOJI_SEARCH_SUGGESTIONS)
-
-    candidates.forEachIndexed { index, emoji ->
-        val key = AppCompatButton(this).apply {
-            text = emoji
-            setAllCaps(false)
-            textSize = 19f
-            background = uiDrawable(R.drawable.bg_key)
-            gravity = Gravity.CENTER
-            setTextColor(uiColor(R.color.key_text))
-            flattenView(this)
-            bindPressAction(this) { onEmojiChosen(emoji) }
-            layoutParams = LinearLayout.LayoutParams(dp(52), dp(42)).also {
-                if (index < candidates.lastIndex) {
-                    it.marginEnd = dp(6)
-                }
+        filterEmojiCandidates(emojiSearchInput.text).take(MAX_EMOJI_SEARCH_SUGGESTIONS)
+    }
+    val renderKey = candidates to query.isBlank()
+    if (emojiMostUsedRow.tag == renderKey) return
+    emojiMostUsedRow.tag = renderKey
+    emojiMostUsedRow.removeAllViews()
+    emojiMostUsedRow.contentDescription = if (query.isBlank()) "Most used emojis" else "Emoji search results"
+    candidates.chunked(8).forEachIndexed { rowIndex, emojis ->
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                if (rowIndex == 0 && candidates.size > 8) bottomMargin = dp(4)
             }
         }
-        emojiMostUsedRow.addView(key)
+        emojis.forEach { emoji -> row.addView(buildEmojiGridKey(emoji, widthDp = 46, heightDp = 44)) }
+        emojiMostUsedRow.addView(row)
     }
 }
 
@@ -242,7 +223,7 @@ internal fun NboardImeService.recordEmojiUsage(emoji: String) {
         emojiRecents.removeLast()
     }
     saveEmojiUsage()
-    if (isEmojiSearchMode) {
+    if (isEmojiMode) {
         renderEmojiSuggestions()
     }
 }
@@ -313,7 +294,7 @@ internal fun NboardImeService.predictionRenderContextKey(beforeCursor: String): 
 
 internal fun NboardImeService.setPredictionWords(words: List<String>) {
     predictionRow.words = words.toList()
-    hasPredictionSuggestions = words.isNotEmpty()
+    hasPredictionSuggestions = words.any { it.isNotBlank() }
 }
 
 internal fun NboardImeService.shouldShowPredictionRow(): Boolean {
@@ -362,4 +343,92 @@ internal fun NboardImeService.extractPredictionSentenceContext(beforeCursor: Str
     )
     val startIndex = if (lastBoundary >= 0) lastBoundary + 1 else 0
     return beforeCursor.substring(startIndex).trimStart()
+}
+
+
+/** The emoji in the skin tone the user last picked for it (default yellow if never picked). */
+internal fun NboardImeService.preferredEmojiTone(emoji: String): String {
+    val base = EmojiTones.base(emoji)
+    val tone = emojiTonePreferences[base] ?: return emoji
+    return EmojiTones.withTone(base, EmojiTones.MODIFIERS.getOrNull(tone))
+}
+
+/** Hold an emoji: default plus five skin tones; slide to one and lift. The choice is remembered. */
+internal fun NboardImeService.showEmojiTonePopup(anchor: View, emoji: String, rawX: Float, rawY: Float) {
+    dismissActivePopup()
+    val base = EmojiTones.base(emoji)
+    val choices = listOf<String?>(null) + EmojiTones.MODIFIERS
+    val row = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        background = uiDrawable(R.drawable.bg_variant_popup)
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+    }
+    val views = mutableListOf<View>()
+    val actions = mutableListOf<(() -> Unit)?>()
+    choices.forEachIndexed { index, modifier ->
+        val option = EmojiTones.withTone(base, modifier)
+        val view = AppCompatButton(this).apply {
+            text = option
+            setAllCaps(false)
+            textSize = 24f
+            contentDescription = if (modifier == null) "Default skin tone" else "Skin tone ${index}"
+            background = uiDrawable(R.drawable.bg_popup_option)
+            gravity = Gravity.CENTER
+            flattenView(this)
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(48)).also { if (index < choices.lastIndex) it.marginEnd = dp(2) }
+        }
+        views += view
+        actions += {
+            if (modifier == null) emojiTonePreferences.remove(base) else emojiTonePreferences[base] = index - 1
+            saveEmojiTonePreferences()
+            onEmojiChosen(option)
+            showToneOnVisibleKeys(base, option)
+        }
+        row.addView(view)
+    }
+    val popup = android.widget.PopupWindow(row, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, false).apply {
+        isOutsideTouchable = false
+        isTouchable = false
+        isClippingEnabled = false
+        setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0x00000000))
+        elevation = dp(6).toFloat()
+        setOnDismissListener {
+            if (activePopupWindow === this) {
+                activePopupWindow = null
+                activeSwipePopupSession = null
+            }
+        }
+    }
+    activePopupWindow = popup
+    showPopupNearTouch(anchor, popup, row, rawX, rawY)
+    val current = (emojiTonePreferences[base]?.plus(1)) ?: 0
+    activeSwipePopupSession = SwipePopupSession(views, actions, List(views.size) { true }, current)
+    highlightSwipePopupSelection(current)
+}
+
+internal fun NboardImeService.loadEmojiTonePreferences() {
+    emojiTonePreferences.clear()
+    val raw = getSharedPreferences(KeyboardModeSettings.PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_EMOJI_TONES_JSON, null) ?: return
+    try {
+        val json = JSONObject(raw)
+        json.keys().forEach { key -> json.optInt(key, -1).takeIf { it in 0..4 }?.let { emojiTonePreferences[key] = it } }
+    } catch (_: Exception) {
+        emojiTonePreferences.clear()
+    }
+}
+
+internal fun NboardImeService.saveEmojiTonePreferences() {
+    val json = JSONObject().apply { emojiTonePreferences.forEach { (base, tone) -> put(base, tone) } }
+    getSharedPreferences(KeyboardModeSettings.PREFS_NAME, Context.MODE_PRIVATE).edit()
+        .putString(KEY_EMOJI_TONES_JSON, json.toString()).apply()
+}
+
+/** Updates already built keys for [base] (grid and most-used rows) without rebuilding the grid. */
+internal fun NboardImeService.showToneOnVisibleKeys(base: String, shown: String) {
+    fun visit(view: View) {
+        if (view is AppCompatButton && view.text?.let { EmojiTones.base(it.toString()) } == base) view.text = shown
+        if (view is ViewGroup) for (i in 0 until view.childCount) visit(view.getChildAt(i))
+    }
+    if (isEmojiGridInitialized()) listOf(emojiGridRow1, emojiGridRow2, emojiGridRow3).forEach(::visit)
+    if (isEmojiMostUsedRowInitialized()) visit(emojiMostUsedRow)
 }

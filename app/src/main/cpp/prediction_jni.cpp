@@ -20,22 +20,33 @@ void fail(JNIEnv *env, const std::exception &error) {
 }
 }
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_nboard_ime_prediction_NeuralPredictor_nativeOpen(JNIEnv *env,jobject,jstring path) {
-    try { return reinterpret_cast<jlong>(new KeyboardModel(string(env,path))); }
+Java_com_nboard_ime_prediction_NeuralPredictor_nativeOpen(JNIEnv *env,jobject,jstring path,jobjectArray vocabulary) {
+    try {
+        std::vector<std::string> words;
+        for (int i = 0; i < env->GetArrayLength(vocabulary); ++i) {
+            auto item = (jstring)env->GetObjectArrayElement(vocabulary, i);
+            words.push_back(string(env, item)); env->DeleteLocalRef(item);
+        }
+        return reinterpret_cast<jlong>(new KeyboardModel(string(env,path), words));
+    }
     catch (const std::exception &e) { fail(env,e); return 0; }
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_nboard_ime_prediction_NeuralPredictor_nativeWordStart(JNIEnv*,jobject,jlong handle) {
+    return reinterpret_cast<KeyboardModel *>(handle)->isWordStart();
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_nboard_ime_prediction_NeuralPredictor_nativeClose(JNIEnv*,jobject,jlong handle) {
     delete reinterpret_cast<KeyboardModel *>(handle);
 }
 extern "C" JNIEXPORT jobjectArray JNICALL
-Java_com_nboard_ime_prediction_NeuralPredictor_nativeScore(JNIEnv *env,jobject,jlong handle,jstring context,jstring prefix,jobjectArray input) {
+Java_com_nboard_ime_prediction_NeuralPredictor_nativeScore(JNIEnv *env,jobject,jlong handle,jstring context,jstring prefix,jobjectArray input,jboolean discover) {
     try {
         std::vector<std::string> candidates;
         for (int i=0;i<env->GetArrayLength(input);++i) {
             auto item=(jstring)env->GetObjectArrayElement(input,i); candidates.push_back(string(env,item)); env->DeleteLocalRef(item);
         }
-        auto output=reinterpret_cast<KeyboardModel *>(handle)->score(string(env,context),string(env,prefix),candidates);
+        auto output=reinterpret_cast<KeyboardModel *>(handle)->score(string(env,context),string(env,prefix),candidates,discover);
         auto result=env->NewObjectArray(output.size()*2,env->FindClass("java/lang/String"),nullptr);
         for (size_t i=0;i<output.size();++i) {
             auto word=env->NewStringUTF(output[i].first.c_str()); auto score=env->NewStringUTF(std::to_string(output[i].second).c_str());

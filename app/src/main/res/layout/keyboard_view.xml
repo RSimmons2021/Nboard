@@ -245,6 +245,17 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/emojiMostUsedLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
+            android:fontFamily="@font/inter_variable"
+            android:text="Most used"
+            android:textColor="@color/key_text"
+            android:textSize="12sp"
+            android:alpha="0.7" />
+
         <HorizontalScrollView
             android:id="@+id/emojiSuggestionsScroll"
             android:layout_width="match_parent"
@@ -258,7 +269,8 @@
                 android:id="@+id/emojiMostUsedRow"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal" />
+                android:orientation="vertical"
+                android:contentDescription="Most used emojis" />
         </HorizontalScrollView>
 
         <HorizontalScrollView
@@ -274,21 +286,6 @@
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
-
-                <LinearLayout
-                    android:id="@+id/emojiRecentColumn"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-
-                <View
-                    android:id="@+id/emojiRecentDivider"
-                    android:layout_width="1dp"
-                    android:layout_height="136dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_marginEnd="6dp"
-                    android:alpha="0.25"
-                    android:background="?android:attr/textColorPrimary" />
 
                 <LinearLayout
                     android:id="@+id/emojiAllColumn"

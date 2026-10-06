@@ -140,13 +140,34 @@ object KeyboardModeSettings {
             .putBoolean("clipboard_history_enabled", enabled).apply()
     }
 
-    fun loadPredictionMotionEnabled(context: Context): Boolean =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean("prediction_motion_enabled", true)
+    /** The key pop-up glides between quickly pressed keys. */
+    fun loadKeyPreviewSlideEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("key_preview_slide_enabled", true)
 
-    fun savePredictionMotionEnabled(context: Context, enabled: Boolean) {
+    fun saveKeyPreviewSlideEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean("key_preview_slide_enabled", enabled).apply()
+    }
+
+    /** 0..1: how long the key pop-up glide lasts. */
+    fun loadKeyPreviewSlideIntensity(context: Context): Float =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getFloat("key_preview_slide_intensity", .5f).coerceIn(0f, 1f)
+
+    fun saveKeyPreviewSlideIntensity(context: Context, intensity: Float) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putFloat("key_preview_slide_intensity", intensity.coerceIn(0f, 1f)).apply()
+    }
+
+    /** Suggestion letter animation. An earlier on/off switch set to off becomes [PredictionMotionLevel.OFF]. */
+    fun loadPredictionMotionLevel(context: Context): PredictionMotionLevel {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.contains("prediction_motion_level")) {
+            return PredictionMotionLevel.entries.getOrElse(prefs.getInt("prediction_motion_level", 2)) { PredictionMotionLevel.STANDARD }
+        }
+        return if (prefs.getBoolean("prediction_motion_enabled", true)) PredictionMotionLevel.STANDARD else PredictionMotionLevel.OFF
+    }
+
+    fun savePredictionMotionLevel(context: Context, level: PredictionMotionLevel) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putBoolean("prediction_motion_enabled", enabled).apply()
+            .putInt("prediction_motion_level", level.ordinal).apply()
     }
     const val PREFS_NAME = "nboard_settings"
     private const val KEY_LEFT_MODE = "left_bottom_mode"

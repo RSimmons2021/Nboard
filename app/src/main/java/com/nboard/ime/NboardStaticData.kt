@@ -1,6 +1,6 @@
 package com.nboard.ime
 
-val DEFAULT_TOP_EMOJIS = listOf("😀", "😂", "❤️", "🔥", "😭", "👍", "🥳", "✨")
+val DEFAULT_TOP_EMOJIS = listOf("😀", "😂", "❤️", "🔥", "😭", "👍", "🥳", "✨", "😊", "🙏", "😍", "😅", "💯", "👀", "🤔", "🎉")
 val EMOJI_SCAN_RANGES = listOf(
         0x203C..0x3299,
         0x1F000..0x1FAFF
@@ -50,6 +50,11 @@ val VARIANT_MAP = mapOf(
 
 val SMART_TYPING_SENTENCE_ENDERS = setOf('.', '!', '?')
 val AUTOCORRECT_TRIGGER_DELIMITERS = setOf(' ', '.', ',', '!', '?', ';', ':', '\n')
+val PREDICTION_NO_SPACE_BEFORE = setOf('.', ',', '!', '?', ';', ':', ')', ']', '}', '"', '”', '\n')
+const val PREDICTION_WORD_TAIL_WINDOW = 48
+const val ADDRESS_CONTEXT_WINDOW = 40
+val ADDRESS_SEPARATORS = setOf('.', '@', '/', '#', '_')
+val AUTOCORRECT_CLOSING_PUNCTUATION = setOf(')', ']', '}', '"', '”', '»', '*', '_')
 val APOSTROPHE_CHARS = setOf('\'', '’', '‘', 'ʼ', '`', '´', '‛', '＇')
 val VOWELS_FOR_REPEAT = setOf('a', 'e', 'i', 'o', 'u', 'y')
 val DIACRITIC_REGEX = Regex("\\p{M}+")
@@ -164,6 +169,16 @@ val FRENCH_TYPOS = mapOf(
         "presquile" to "presqu'île"
     )
 
+/** Texting words absent from the word lists; typed on purpose, never "corrected". */
+val TEXTING_VOCABULARY = setOf(
+    "lmao", "lmfao", "rofl", "smh", "tbh", "imo", "imho", "idk", "idc", "ngl", "istg", "irl", "ikr", "fyi",
+    "btw", "brb", "omw", "wyd", "hbu", "tbf", "afaik", "jk", "nvm", "pls", "plz", "thx", "ty", "tysm", "np",
+    "bruh", "bro", "sis", "sus", "yeet", "lowkey", "highkey", "finna", "bestie", "periodt", "slay", "vibe",
+    "vibes", "rizz", "simp", "stan", "deadass", "fr", "frfr", "rn", "atm", "tho", "tmrw", "yall", "y'all",
+    "insta", "snapchat", "tiktok", "venmo", "lyft", "uber", "whatsapp", "facetime", "spotify", "netflix",
+    "okayyy", "sooo", "yesss", "nooo", "omgg", "hahaha", "hahah", "lolol"
+)
+
 val ENGLISH_TYPOS = mapOf(
         "teh" to "the",
         "woudl" to "would",
@@ -196,7 +211,70 @@ val ENGLISH_TYPOS = mapOf(
         "whats" to "what's",
         "thats" to "that's",
         "heres" to "here's",
-        "theres" to "there's"
+        "theres" to "there's",
+        // Well-known misspellings that the word lists contain as if valid (e.g. "untill").
+        "untill" to "until",
+        "wierd" to "weird",
+        "begining" to "beginning",
+        "seperate" to "separate",
+        "seperately" to "separately",
+        "tommorow" to "tomorrow",
+        "tommorrow" to "tomorrow",
+        "tomorow" to "tomorrow",
+        "realy" to "really",
+        "rember" to "remember",
+        "remeber" to "remember",
+        "freind" to "friend",
+        "freinds" to "friends",
+        "thier" to "their",
+        "wich" to "which",
+        "occured" to "occurred",
+        "recieve" to "receive",
+        "recieved" to "received",
+        "beleive" to "believe",
+        "belive" to "believe",
+        "definately" to "definitely",
+        "definatly" to "definitely",
+        "goverment" to "government",
+        "enviroment" to "environment",
+        "truely" to "truly",
+        "neccessary" to "necessary",
+        "existance" to "existence",
+        "appartment" to "apartment",
+        "affraid" to "afraid",
+        "everthing" to "everything",
+        "sory" to "sorry",
+        "youself" to "yourself",
+        "accross" to "across",
+        "adress" to "address",
+        "arguement" to "argument",
+        "basicly" to "basically",
+        "calender" to "calendar",
+        "comming" to "coming",
+        "completly" to "completely",
+        "dissapoint" to "disappoint",
+        "embarass" to "embarrass",
+        "finaly" to "finally",
+        "foward" to "forward",
+        "futher" to "further",
+        "gaurd" to "guard",
+        "happend" to "happened",
+        "immediatly" to "immediately",
+        "independant" to "independent",
+        "knowlege" to "knowledge",
+        "liek" to "like",
+        "occassion" to "occasion",
+        "persue" to "pursue",
+        "posession" to "possession",
+        "publically" to "publicly",
+        "recomend" to "recommend",
+        "sucess" to "success",
+        "suprise" to "surprise",
+        "tounge" to "tongue",
+        "writting" to "writing",
+        "probaly" to "probably",
+        "beautifull" to "beautiful",
+        "untll" to "until"
     )
 
 val ALL_EMOJIS = listOf(

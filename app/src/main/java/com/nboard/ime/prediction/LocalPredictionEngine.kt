@@ -50,12 +50,13 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
                 prefix.length < 3 -> dict.byFirst[prefix.first()].orEmpty().filter { dict.folded[it]!!.startsWith(prefix) }.take(256)
                 else -> prefixCandidates(dict, prefix)
             }
-            val rankingSignals = signals.copy(hasConfidentPrefix = prefix.isNotBlank() && (source + request.words.keys).any { word ->
+            val rankingSignals = signals.copy(hasConfidentPrefix = prefix.isNotBlank() && (source + request.words.keys + request.phrases.keys).any { word ->
                 (dict.folded[word] ?: PredictionRanker.fold(word)).startsWith(prefix) &&
                     ((dict.frequencies[word] ?: 0) >= 1000 || (request.words[word] ?: 0) > 0)
             })
-            for (word in (source + request.words.keys).distinct()) {
+            for (word in (source + request.words.keys + request.phrases.keys).distinct()) {
                 if (word == request.prefix.lowercase(Locale.US) || word.length > 24) continue
+                if (language == "english" && word in DANISH_NOISE && word !in request.words) continue
                 if (PredictionRanker.prefixDistance(prefix, dict.folded[word] ?: PredictionRanker.fold(word)) > 1) continue
                 val c = PredictionRanker.score(word, dict.frequencies[word] ?: 1L, contextual[word] ?: 0L,
                     request, rankingSignals, dict.folded[word] ?: PredictionRanker.fold(word))
@@ -65,24 +66,53 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
         return result.values.sortedByDescending { it.score }.take(36)
     }
 
-    fun refine(request: PredictionRequest, local: List<PredictionCandidate>): List<PredictionCandidate> {
+    fun refine(request: PredictionRequest, local: List<PredictionCandidate>, discoverWords: Boolean = true): List<PredictionCandidate> {
         // The downloaded model is English/Danish. French stays on the French dictionary.
         if (request.language != "ENGLISH" || request.context.isBlank()) return local
         if (!attemptedNeural) {
             attemptedNeural = true
-            neural = try { NeuralPredictor(modelFile().absolutePath) } catch (e: Exception) {
+            neural = try { NeuralPredictor(modelFile().absolutePath, dictionary("english").frequencies.keys.toList()) } catch (e: Exception) {
                 Log.e("NboardPrediction", "Local model unavailable; dictionary remains active", e); null
             } catch (e: LinkageError) {
                 Log.e("NboardPrediction", "Native runtime unavailable; dictionary remains active", e); null
             }
         }
-        val model = neural ?: return local
-        val scores = model.score(request.context.lowercase(Locale.US), request.prefix.lowercase(Locale.US), local.take(24).map { it.word })
+        val scores = modelLikelihoods(request, local, discoverWords) ?: return local
+        return combine(request, local, scores)
+    }
+
+    /** Model log-likelihood of each whole word after the context, or null without a model. */
+    internal fun modelLikelihoods(request: PredictionRequest, local: List<PredictionCandidate>,
+                                  discoverWords: Boolean = true): Map<String, Double>? {
+        val model = neural ?: return null
+        // Cased word-start models read capitals as signal; the original model is lowercase-only.
+        val context = if (model.wordStart) request.context else request.context.lowercase(Locale.US)
+        return model.score(context, request.prefix.lowercase(Locale.US), local.take(24).map { it.word }, discoverWords)
+    }
+
+    /**
+     * How much of the dictionary frequency prior is replaced by the model, and the model's weight.
+     * The model already conditions on the sentence, so a full unigram/bigram prior double-counts
+     * frequency; next-word (empty prefix) and completion (typed prefix) are weighted separately.
+     */
+    internal data class BlendWeights(val priorDrop: Double, val likelihood: Double)
+
+    private fun blendFor(request: PredictionRequest): BlendWeights {
+        val general = neural?.wordStart == true
+        return when {
+            request.prefix.isBlank() -> if (general) GENERAL_MODEL_NEXT_WORD else KEYBOARD_MODEL_NEXT_WORD
+            else -> if (general) GENERAL_MODEL_COMPLETION else KEYBOARD_MODEL_COMPLETION
+        }
+    }
+
+    internal fun combine(request: PredictionRequest, local: List<PredictionCandidate>, scores: Map<String, Double>,
+                         weights: BlendWeights = blendFor(request)): List<PredictionCandidate> {
         val dict = dictionary("english")
         val all = local.associateBy { it.word }.toMutableMap()
         val signals = PredictionRanker.signals(request)
         scores.forEach { (word, probability) ->
-            if (word !in dict.frequencies && word !in request.words) return@forEach
+            if (word !in dict.frequencies && word !in request.words && word !in request.phrases) return@forEach
+            if (word in DANISH_NOISE && word !in request.words) return@forEach
             if (word == request.prefix.lowercase(Locale.US)) return@forEach
             val candidate = all[word] ?: PredictionRanker.score(word, dict.frequencies[word] ?: 1,
                 dict.bigrams[signals.previous]?.get(word) ?: 0, request, signals,
@@ -91,11 +121,13 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
             // A small model assigns very low likelihood to unfamiliar names.
             // Repeated user vocabulary supplies evidence the model never trained on.
             val likelihood = if ((request.words[word] ?: 0) >= 2) probability.coerceAtLeast(-8.0) else probability
-            all[word] = candidate.copy(score = candidate.score - candidate.dictionaryPrior * .65 + likelihood * 1.25)
+            all[word] = candidate.copy(score = candidate.score - candidate.dictionaryPrior * weights.priorDrop + likelihood * weights.likelihood)
         }
         // Unscored tail candidates cannot outrank scored words merely by avoiding a negative log probability.
         val floor = (scores.values.minOrNull() ?: -16.0).coerceAtLeast(-25.0)
-        return all.values.map { if (it.word in scores) it else it.copy(score = it.score - it.dictionaryPrior * .65 + floor * 1.25) }
+        return all.values.map {
+            if (it.word in scores) it else it.copy(score = it.score - it.dictionaryPrior * weights.priorDrop + floor * weights.likelihood)
+        }
     }
 
     /** Binary prefix lookup avoids scanning thousands of words for every typo. */
@@ -128,6 +160,12 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
     }
 
     private fun modelFile(): File {
+        // Debug builds can evaluate another GGUF placed in private storage:
+        //   adb shell "run-as com.nboard.ime sh -c 'mkdir -p files/models && cat > files/models/override.gguf'" < model.gguf
+        if (com.nboard.ime.BuildConfig.DEBUG) {
+            val override = File(context.filesDir, "models/override.gguf")
+            if (override.isFile) { Log.i("NboardPrediction", "Using override model ${override.length()} bytes"); return override }
+        }
         val target = File(context.noBackupFilesDir, "models/daen-xbu-q6_k.gguf")
         target.parentFile!!.mkdirs()
         if (target.isFile && target.length() == 54_763_904L) return target
@@ -143,19 +181,36 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
     }
 
     override fun close() { neural?.close(); neural = null }
-    companion object { const val MODEL_SHA = "47b3a97a80ab96df2c7148b8bb155f471d0fe74bffed392c0c4ea220d36ea5f8" }
+    companion object {
+        /**
+         * Danish function words that the bilingual model predicts and the subtitle-derived
+         * English list also contains ("og", "det"). Never English suggestions unless typed by the user.
+         */
+        private val DANISH_NOISE = setOf("og", "det", "er", "jeg", "ikke", "på", "har", "af", "som", "så",
+            "hvad", "skal", "vil", "kan", "hun", "mig", "sig", "hende", "jer", "dem", "nu", "du", "ud", "fra",
+            "hvor", "godt", "hej", "tak", "nej", "ja", "være", "blive", "også", "meget", "noget", "ingen")
+        const val MODEL_SHA = "47b3a97a80ab96df2c7148b8bb155f471d0fe74bffed392c0c4ea220d36ea5f8"
+        // Fitted per model on held-out conversational text (tools/nextword-eval/fit_blend.py, dev split).
+        internal val KEYBOARD_MODEL_NEXT_WORD = BlendWeights(priorDrop = 1.0, likelihood = .5)
+        internal val KEYBOARD_MODEL_COMPLETION = BlendWeights(priorDrop = .8, likelihood = 2.5)
+        internal val GENERAL_MODEL_NEXT_WORD = BlendWeights(priorDrop = .9, likelihood = 1.0)
+        internal val GENERAL_MODEL_COMPLETION = BlendWeights(priorDrop = .65, likelihood = 4.0)
+    }
 }
 
-internal class NeuralPredictor(path: String) : AutoCloseable {
-    private var handle: Long = nativeOpen(path)
+internal class NeuralPredictor(path: String, vocabulary: List<String> = emptyList()) : AutoCloseable {
+    private var handle: Long = nativeOpen(path, vocabulary.toTypedArray())
     init { check(handle != 0L) { "Could not load local prediction model" } }
-    fun score(context: String, prefix: String, candidates: List<String>): Map<String, Double> {
-        val output = nativeScore(handle, context, prefix, candidates.toTypedArray())
+    /** Word-start tokenizer (" word"): cased general model. Otherwise the original lowercase keyboard model. */
+    val wordStart: Boolean = nativeWordStart(handle)
+    fun score(context: String, prefix: String, candidates: List<String>, discoverWords: Boolean = true): Map<String, Double> {
+        val output = nativeScore(handle, context, prefix, candidates.toTypedArray(), discoverWords)
         return output.toList().chunked(2).associate { it[0] to it[1].toDouble() }
     }
     override fun close() { if (handle != 0L) { nativeClose(handle); handle = 0L } }
-    private external fun nativeOpen(path: String): Long
-    private external fun nativeScore(handle: Long, context: String, prefix: String, candidates: Array<String>): Array<String>
+    private external fun nativeOpen(path: String, vocabulary: Array<String>): Long
+    private external fun nativeScore(handle: Long, context: String, prefix: String, candidates: Array<String>, discoverWords: Boolean): Array<String>
     private external fun nativeClose(handle: Long)
+    private external fun nativeWordStart(handle: Long): Boolean
     companion object { init { System.loadLibrary("nboard_prediction") } }
 }

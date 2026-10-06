@@ -21,7 +21,9 @@ class PredictionMotionTest {
     @Test fun repeatedLettersRemainDistinctAndOrdered() {
         val previous = glyphs("bookkeeper")
         val result = reconcilePredictionGlyphs(previous, "books")
-        assertEquals(listOf(1L, 2L, 3L, 4L), result.filterNot { it.exiting }.take(4).map { it.id })
+        assertEquals(listOf("b", "o", "o", "k"), result.filterNot { it.exiting }.take(4).map { it.text })
+        val retained = result.filterNot { it.exiting }.mapNotNull { glyph -> previous.firstOrNull { it.id == glyph.id } }
+        assertEquals(retained.map { it.start }.sorted(), retained.map { it.start })
         assertEquals(result.size, result.map { it.id }.distinct().size)
     }
     @Test fun deletedLettersReturnWithoutResettingIdentityDuringRapidBackspace() {
@@ -33,5 +35,30 @@ class PredictionMotionTest {
     @Test fun accentsAndJoinedEmojiAnimateAsWholeGraphemes() {
         val word = "a\u0301👨‍👩‍👧‍👦🇺🇸👍🏽"
         assertEquals(listOf("a\u0301", "👨‍👩‍👧‍👦", "🇺🇸", "👍🏽"), predictionGraphemes(word).map { (start, end) -> word.substring(start, end) })
+    }
+    @Test fun unexpectedShortWordDoesNotDragLettersAcrossTheSlot() {
+        val previous = glyphs("international")
+        val result = reconcilePredictionGlyphs(previous, "in")
+        for (glyph in result.filterNot { it.exiting }) {
+            val old = previous.firstOrNull { it.id == glyph.id } ?: continue
+            val oldPosition = old.start - old.source.length / 2f
+            val newPosition = glyph.start - glyph.source.length / 2f
+            assertTrue("A retained letter travelled ${kotlin.math.abs(newPosition - oldPosition)} character widths",
+                kotlin.math.abs(newPosition - oldPosition) <= 2f)
+        }
+    }
+    @Test fun onlyRelatedWordsMorphLetterByLetter() {
+        assertTrue(predictionWordsRelated("hel", "hello"))
+        assertTrue(predictionWordsRelated("hello", "help"))
+        assertTrue(predictionWordsRelated("I", "It"))
+        assertFalse(predictionWordsRelated("hello", "thanks"))
+        assertFalse(predictionWordsRelated("internet", "izq"))
+        assertFalse(predictionWordsRelated("", "hello"))
+    }
+    @Test fun typedLettersAreConfirmedInSuggestions() {
+        assertEquals(3, typedPrefixLength("hello", "Hel"))
+        assertEquals(1, typedPrefixLength("the", "teh"))     // correction: only the matching start
+        assertEquals(2, typedPrefixLength("café", "ca"))
+        assertEquals(0, typedPrefixLength("hello", ""))
     }
 }

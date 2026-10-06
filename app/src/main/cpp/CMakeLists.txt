@@ -10,7 +10,21 @@ set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+if(ANDROID)
+    # One CPU module per ARM feature level (baseline ARMv8.0 up to ARMv9.2 with SME); the
+    # engine loads the best one this phone supports at runtime, so recent phones get
+    # dot-product/int8-matmul kernels without breaking older ones.
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
+    set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
+    # 16 KB page alignment for every shared library and backend module (Android 15+).
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
+    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
+    # ggml writes backend modules to the runtime directory; put them where the APK packager looks.
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
+else()
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(FetchContent)
 FetchContent_Declare(llama
@@ -19,8 +33,7 @@ FetchContent_Declare(llama
 FetchContent_MakeAvailable(llama)
 if(ANDROID)
     add_library(nboard_prediction SHARED prediction.cpp prediction_jni.cpp)
-    target_link_libraries(nboard_prediction PRIVATE llama log)
-    target_link_options(nboard_prediction PRIVATE "-Wl,-z,max-page-size=16384")
+    target_link_libraries(nboard_prediction PRIVATE llama ggml log)
 else()
     add_executable(nboard_prediction_bench prediction.cpp prediction_bench.cpp)
     target_link_libraries(nboard_prediction_bench PRIVATE llama)

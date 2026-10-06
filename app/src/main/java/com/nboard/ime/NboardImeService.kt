@@ -110,8 +110,30 @@ class NboardImeService : InputMethodService() {
     internal val predictionRequests = kotlinx.coroutines.channels.Channel<PredictionWork>(kotlinx.coroutines.channels.Channel.CONFLATED)
     @Volatile internal var predictionRevision = 0L
     internal var requestedPredictionKey: String? = null
+    internal var pendingBoundaryPrediction: Job? = null
     internal var lastRankedPredictions = emptyList<String>()
     internal val learnedWordLastUsed = mutableMapOf<String, Long>()
+    /** Replaced once the saved table finishes loading in the background (see loadPredictionLearning). */
+    internal var phraseMemory = com.nboard.ime.prediction.PhraseMemory(PHRASE_MEMORY_CAPACITY)
+    /** Until the saved table is loaded, the (empty) in-memory one must never overwrite the file. */
+    internal var phraseMemoryLoaded = false
+    internal var phraseLoadGeneration = 0
+    internal val wordCasing = com.nboard.ime.prediction.WordCasing()
+    internal var wordCasingDirty = false
+    internal var phraseWordTouched = false
+    internal var lastPhraseReceipt: com.nboard.ime.prediction.PhraseMemory.Receipt? = null
+    internal var phraseMemoryDirty = false
+    internal var lastPhraseSaveAt = 0L
+    private val learningResetListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == KEY_LEARNING_RESET_VERSION) {
+            loadPredictionLearning()
+            rejectedCorrections.clear()
+            learningVersion++
+            phraseWordTouched = false
+            lastPhraseReceipt = null
+            invalidatePredictions()
+        }
+    }
     internal val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var keyboardUiContext: Context
     internal val keyPressPreview by lazy { KeyPressPreview(this) }
@@ -145,10 +167,9 @@ class NboardImeService : InputMethodService() {
     internal lateinit var emojiSearchIconButton: ImageButton
     internal lateinit var emojiSuggestionsScroll: HorizontalScrollView
     internal lateinit var emojiMostUsedRow: LinearLayout
+    internal lateinit var emojiMostUsedLabel: TextView
     internal lateinit var emojiSearchInput: EditText
     internal lateinit var emojiGridScroll: HorizontalScrollView
-    internal lateinit var emojiRecentColumn: LinearLayout
-    internal lateinit var emojiRecentDivider: View
     internal lateinit var emojiGridRow1: LinearLayout
     internal lateinit var emojiGridRow2: LinearLayout
     internal lateinit var emojiGridRow3: LinearLayout
@@ -181,7 +202,7 @@ class NboardImeService : InputMethodService() {
     internal var isNumbersMode = false
     internal var manualShiftMode = ShiftMode.OFF
     internal var isAutoShiftEnabled = true
-    internal var lastShiftTapAtMs = 0L
+    internal var shiftTapArmed = false
     internal var isClipboardOpen = false
     internal var isGenerating = false
     internal var isSymbolsSubmenuOpen = false
@@ -208,6 +229,8 @@ class NboardImeService : InputMethodService() {
     internal var hapticMode = HapticMode.SYSTEM
 
     internal val emojiUsageCounts = mutableMapOf<String, Int>()
+    /** Base emoji -> chosen skin tone (index into EmojiTones.MODIFIERS). */
+    internal val emojiTonePreferences = mutableMapOf<String, Int>()
     internal val emojiRecents = ArrayDeque<String>()
     internal val emojiSearchIndex = mutableMapOf<String, String>()
     internal val allEmojiCatalog = mutableListOf<String>()
@@ -217,18 +240,21 @@ class NboardImeService : InputMethodService() {
     internal val learnedBigramFrequency = mutableMapOf<String, Int>()
     internal val learnedTrigramFrequency = mutableMapOf<String, Int>()
     internal var learningDirtyUpdates = 0
+    /** Incremented on every learned-history change; keys [learningSnapshotCache]. */
+    internal var learningVersion = 0L
+    internal var learningSnapshotCache: LearningSnapshot? = null
+    /** The settings "clear history" generation this service loaded. */
+    internal var learningResetVersion = 0L
     @Volatile
     internal var englishLexicon = Lexicon.empty()
     @Volatile
     internal var frenchLexicon = Lexicon.empty()
     internal lateinit var autoCorrectEngine: AutoCorrect
-    internal lateinit var bigramPredictor: BigramPredictor
 
     internal var activePopupWindow: PopupWindow? = null
     internal var activeVariantSession: VariantSelectionSession? = null
     internal var activeSwipePopupSession: SwipePopupSession? = null
     internal var pendingAutoCorrection: AutoCorrectionUndo? = null
-    internal var pendingPredictionUndo: PredictionUndo? = null
     internal var activeVoiceRecognizer: SpeechRecognizer? = null
     internal var aiPillShimmerAnimator: ValueAnimator? = null
     internal var aiTextPulseAnimator: ValueAnimator? = null
@@ -246,6 +272,8 @@ class NboardImeService : InputMethodService() {
     internal var predictionRenderCache: PredictionRenderCache? = null
     internal val swipeLetterKeyByView = LinkedHashMap<View, String>()
     internal var activeSwipeTypingSession: SwipeTypingSession? = null
+    /** Keys still under a finger. A new touch commits them first, so overlapping taps keep press order. */
+    internal val heldKeyCommits = LinkedHashMap<View, () -> Unit>()
     internal var isVoiceListening = false
     internal var isVoiceStopping = false
     internal var voiceShouldAutoRestart = false
@@ -257,6 +285,8 @@ class NboardImeService : InputMethodService() {
     private var activeEditorPackage: String? = null
     internal var smartTypingBehavior = SmartTypingBehavior(0)
     internal var pendingAutoInsertedSentenceSpace = false
+    /** The last automatic space followed a period; a domain ending after it rejoins the address. */
+    internal var autoSpacedPeriod = false
 
     private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
         captureClipboardPrimary()
@@ -268,20 +298,26 @@ class NboardImeService : InputMethodService() {
         keyboardUiContext = this
         clipboardHistoryStore = ClipboardHistoryStore(this)
         reloadTypingSettings()
-        autoCorrectEngine = AutoCorrect(this)
+        autoCorrectEngine = AutoCorrect(this).apply {
+            // Personal word pairs (e.g. "see you" -> "tomorrow") tip close corrections.
+            contextProbability = { previous, word ->
+                learnedBigramFrequency[predictionBigramKey(previous, word)]?.let { count -> minOf(0.05, count * 0.01) }
+            }
+        }
         autoCorrectEngine.setModeFromKeyboardMode(keyboardLanguageMode)
-        bigramPredictor = BigramPredictor(this)
-        bigramPredictor.setModeFromKeyboardMode(keyboardLanguageMode)
+        // Predictions come from LocalPredictionEngine; the earlier BigramPredictor is no longer
+        // loaded (it held ~300k entries in memory without being queried).
         serviceScope.launch(Dispatchers.Default) {
             autoCorrectEngine.preload()
-            bigramPredictor.preload()
         }
 
         reloadBottomModesFromSettings()
 
         loadEmojiUsage()
+        loadEmojiTonePreferences()
         loadRejectedCorrections()
         loadPredictionLearning()
+        getSharedPreferences(KeyboardModeSettings.PREFS_NAME, MODE_PRIVATE).registerOnSharedPreferenceChangeListener(learningResetListener)
         startPredictionWorker()
         resetLexicons()
         preloadLexiconsFromAssets()
@@ -303,11 +339,12 @@ class NboardImeService : InputMethodService() {
 
     override fun onDestroy() {
         if (debugInstance?.get() === this) debugInstance = null
-        keyPressPreview.hide()
+        keyPressPreview.dismiss()
         dismissActivePopup()
         stopAiProcessingAnimations()
         stopVoiceInput(forceCancel = true)
         destroyVoiceRecognizer()
+        getSharedPreferences(KeyboardModeSettings.PREFS_NAME, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(learningResetListener)
         savePredictionLearning(force = true)
         recentClipboardExpiryJob?.cancel()
         clipboardManager?.removePrimaryClipChangedListener(clipboardListener)
@@ -320,6 +357,7 @@ class NboardImeService : InputMethodService() {
 
     override fun onCreateInputView(): View {
         return try {
+            keyPressPreview.dismiss()
             reloadTypingSettings()
             reloadBottomModesFromSettings()
             predictionRenderCache = null
@@ -369,14 +407,16 @@ class NboardImeService : InputMethodService() {
         aiGenerationJob?.cancel()
         manualShiftMode = ShiftMode.OFF
         isAutoShiftEnabled = true
-        lastShiftTapAtMs = 0L
+        shiftTapArmed = false
+        phraseWordTouched = false
+        lastPhraseReceipt = null
         updateSmartTypingBehavior(editorInfo)
         pendingAutoInsertedSentenceSpace = false
+        autoSpacedPeriod = false
         isGenerating = false
         stopAiProcessingAnimations()
         stopVoiceInput(forceCancel = true)
         pendingAutoCorrection = null
-        pendingPredictionUndo = null
         activeSwipeTypingSession = null
         predictionRenderCache = null
         isToolbarOpen = false
@@ -394,6 +434,9 @@ class NboardImeService : InputMethodService() {
         updateSmartTypingBehavior(info)
         reloadTypingSettings()
         reloadBottomModesFromSettings()
+        if (isPredictionRowInitialized()) predictionRow.motion = KeyboardModeSettings.loadPredictionMotionLevel(this)
+        keyPressPreview.slideEnabled = KeyboardModeSettings.loadKeyPreviewSlideEnabled(this)
+        keyPressPreview.slideIntensity = KeyboardModeSettings.loadKeyPreviewSlideIntensity(this)
         keyboardUiContext = createKeyboardUiContext()
         if (!voiceInputEnabled) {
             stopVoiceInput(forceCancel = true)
@@ -415,15 +458,15 @@ class NboardImeService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
-        keyPressPreview.hide()
-        pendingPredictionUndo = null
+        keyPressPreview.dismiss()
+        heldKeyCommits.clear()
         super.onFinishInputView(finishingInput)
         invalidatePredictions()
         aiRequestRevision++
         aiPreview = null
         aiUndo = null
         aiGenerationJob?.cancel()
-        savePredictionLearning()
+        savePredictionLearning(flushPhrases = true)
         if (::predictionRow.isInitialized) predictionRow.words = emptyList()
         composeOwner?.hide()
         dismissActivePopup()
@@ -438,12 +481,13 @@ class NboardImeService : InputMethodService() {
         isEmojiSearchMode = false
         manualShiftMode = ShiftMode.OFF
         isAutoShiftEnabled = true
-        lastShiftTapAtMs = 0L
+        shiftTapArmed = false
         pendingAutoCorrection = null
         activeSwipeTypingSession = null
         hasPredictionSuggestions = false
         predictionRenderCache = null
         pendingAutoInsertedSentenceSpace = false
+        autoSpacedPeriod = false
         if (::emojiSearchInput.isInitialized) {
             emojiSearchInput.text?.clear()
         }
@@ -463,9 +507,6 @@ class NboardImeService : InputMethodService() {
         keyboardLanguageMode = KeyboardModeSettings.loadLanguageMode(this)
         if (::autoCorrectEngine.isInitialized) {
             autoCorrectEngine.setModeFromKeyboardMode(keyboardLanguageMode)
-        }
-        if (::bigramPredictor.isInitialized) {
-            bigramPredictor.setModeFromKeyboardMode(keyboardLanguageMode)
         }
         keyboardFontMode = KeyboardModeSettings.loadFontMode(this)
         wordPredictionEnabled = KeyboardModeSettings.loadWordPredictionEnabled(this)
@@ -545,9 +586,6 @@ class NboardImeService : InputMethodService() {
         if (newSelStart != editorSelectionStart || newSelEnd != editorSelectionEnd) aiSelectionRevision++
         editorSelectionStart = newSelStart
         editorSelectionEnd = newSelEnd
-        pendingPredictionUndo?.let { undo ->
-            if (newSelStart != undo.start+undo.accepted.length+undo.suffix.length || newSelStart != newSelEnd) pendingPredictionUndo = null
-        }
         updateAiPreviewUi()
         if (isAiPromptInputActive() || isEmojiSearchInputActive()) {
             clearInlinePromptFocus()
@@ -626,10 +664,9 @@ class NboardImeService : InputMethodService() {
         emojiSearchIconButton = root.findViewById(R.id.emojiSearchIconButton)
         emojiSuggestionsScroll = root.findViewById(R.id.emojiSuggestionsScroll)
         emojiMostUsedRow = root.findViewById(R.id.emojiMostUsedRow)
+        emojiMostUsedLabel = root.findViewById(R.id.emojiMostUsedLabel)
         emojiSearchInput = root.findViewById(R.id.emojiSearchInput)
         emojiGridScroll = root.findViewById(R.id.emojiGridScroll)
-        emojiRecentColumn = root.findViewById(R.id.emojiRecentColumn)
-        emojiRecentDivider = root.findViewById(R.id.emojiRecentDivider)
         emojiGridRow1 = root.findViewById(R.id.emojiGridRow1)
         emojiGridRow2 = root.findViewById(R.id.emojiGridRow2)
         emojiGridRow3 = root.findViewById(R.id.emojiGridRow3)
@@ -712,15 +749,15 @@ class NboardImeService : InputMethodService() {
 
         predictionRow.foreground = Color(uiColor(R.color.key_text))
         predictionRow.useRoboto = keyboardFontMode == KeyboardFontMode.ROBOTO
-        predictionRow.animateWords = KeyboardModeSettings.loadPredictionMotionEnabled(this)
+        predictionRow.motion = KeyboardModeSettings.loadPredictionMotionLevel(this)
 
         applySerifTypeface(modeSwitchButton)
-        modeSwitchButton.textSize = 15f
+        modeSwitchButton.textSize = KEY_SYMBOL_TEXT_SP
         applyInterTypeface(leftPunctuationButton)
-        leftPunctuationButton.textSize = 18f
+        leftPunctuationButton.textSize = KEY_LETTER_TEXT_SP - 1f
         applyInterTypeface(spaceButton)
         applyInterTypeface(rightPunctuationButton)
-        rightPunctuationButton.textSize = 18f
+        rightPunctuationButton.textSize = KEY_LETTER_TEXT_SP - 1f
         applySerifTypeface(aiSummarizeButton)
         applySerifTypeface(aiFixGrammarButton)
         applySerifTypeface(aiExpandButton)
@@ -1005,8 +1042,14 @@ class NboardImeService : InputMethodService() {
         }
 
         predictionRow.onAccept = { word ->
-            performKeyHaptic(predictionRow)
-            commitWordPrediction(word)
+            // While the row is being refreshed, a visible word still counts if it completes
+            // what is typed now; a stale word from the previous context does not.
+            val fragment = if (predictionRow.acceptSuggestions) "" else
+                extractCurrentWordFragment(currentInputConnection?.getTextBeforeCursor(48, 0)?.toString().orEmpty())
+            if (predictionRow.acceptSuggestions || (fragment.isNotBlank() && word.startsWith(fragment, ignoreCase = true))) {
+                performKeyHaptic(predictionRow)
+                commitWordPrediction(word)
+            }
         }
 
         aiPromptInput.setOnFocusChangeListener { _, hasFocus ->
@@ -1043,6 +1086,7 @@ class NboardImeService : InputMethodService() {
         }
         renderedKeyStructure = structure
         keyPressPreview.hide()
+        heldKeyCommits.clear()
         shiftLetterViews.clear()
         shiftKeyView = null
         dismissActivePopup()
@@ -1066,7 +1110,7 @@ class NboardImeService : InputMethodService() {
                     iconTintRes = R.color.key_text,
                     backgroundRes = R.drawable.bg_special_key,
                     weight = 1.25f,
-                    textSizeSp = 16.5f,
+                    textSizeSp = KEY_SYMBOL_TEXT_SP,
                     useSerifTypeface = true,
                     isLast = false
                 ) {
@@ -1084,7 +1128,7 @@ class NboardImeService : InputMethodService() {
                     iconTintRes = R.color.key_text,
                     backgroundRes = R.drawable.bg_special_key,
                     weight = 1.25f,
-                    textSizeSp = 16.5f,
+                    textSizeSp = KEY_SYMBOL_TEXT_SP,
                     useSerifTypeface = true,
                     isLast = false
                 ) {
@@ -1111,8 +1155,10 @@ class NboardImeService : InputMethodService() {
 
         val alphaRow1 = activeLayoutPack.row1
         val alphaRow2 = activeLayoutPack.row2
+        // QWERTY keeps letters only on the first page (as Gboard does); contractions come from
+        // autocorrect and the symbols page. AZERTY keeps it for French elision (l', j', c'est).
         val alphaRow3 = activeLayoutPack.row3.filterNot {
-            it == "'" && hasApostropheBottomSlot()
+            it == "'" && (hasApostropheBottomSlot() || isQwertyLayoutActive())
         }
         val alphaRow3Weight = if (isQwertyLayoutActive()) 0.875f else 1f
 
@@ -1130,6 +1176,8 @@ class NboardImeService : InputMethodService() {
         }
 
         row2.translationX = 0f
+        // Correction slip costs follow the letter layout actually on screen.
+        autoCorrectEngine.setKeyboardRows(listOf(alphaRow1, alphaRow2, alphaRow3).map { it.joinToString("") })
         addTextKeys(row1, alphaRow1, shiftAware = true, topNumberVariants = topNumberVariants)
         if (isQwertyLayoutActive()) {
             val insetPx = resolveQwertySecondRowInsetPx()
@@ -1143,7 +1191,7 @@ class NboardImeService : InputMethodService() {
         shiftKeyView = addSpecialKey(
             row = row3,
             label = null,
-            iconRes = if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide,
+            iconRes = if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.ic_caps_lock else if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide,
             iconTintRes = R.color.key_text,
             backgroundRes = if (manualShiftMode == ShiftMode.CAPS_LOCK) {
                 R.drawable.bg_mode_special_selected
@@ -1156,6 +1204,7 @@ class NboardImeService : InputMethodService() {
             handleShiftTap()
             renderKeyRows()
         } as ImageButton
+        shiftKeyView?.contentDescription = shiftKeyDescription()
 
         addTextKeys(
             row = row3,
@@ -1224,6 +1273,7 @@ class NboardImeService : InputMethodService() {
                 iconTintRes = R.color.key_text,
                 backgroundRes = R.drawable.bg_key,
                 weight = keyWeight,
+                textSizeSp = KEY_LETTER_TEXT_SP,
                 longPressAction = longPress,
                 swipeToken = swipeToken,
                 tapOnDown = keyTapOnDown,
@@ -1244,14 +1294,21 @@ class NboardImeService : InputMethodService() {
         }
     }
 
+    private fun shiftKeyDescription(): String = when {
+        manualShiftMode == ShiftMode.CAPS_LOCK -> "Caps lock on. Tap to turn off"
+        shiftTapArmed -> "Shift. Tap again for caps lock"
+        else -> "Shift. Tap twice for caps lock"
+    }
+
     private fun updateShiftKeyLabels() {
         shiftLetterViews.forEach { (view, original) ->
             val label = if (isShiftActive()) original.uppercase(Locale.US) else original
             if (view.text.toString() != label) view.text = label
         }
         shiftKeyView?.let { key ->
-            setIcon(key, if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide, R.color.key_text)
+            setIcon(key, if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.ic_caps_lock else if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide, R.color.key_text)
             key.background = uiDrawable(if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.bg_mode_special_selected else R.drawable.bg_special_key)
+            key.contentDescription = shiftKeyDescription()
         }
     }
 
@@ -1358,7 +1415,7 @@ class NboardImeService : InputMethodService() {
             val option = AppCompatTextView(this).apply {
                 text = value
                 gravity = Gravity.CENTER
-                textSize = 17f
+                textSize = KEY_LETTER_TEXT_SP
                 applyInterTypeface(this)
                 setTextColor(uiColor(R.color.key_text))
                 background = uiDrawable(R.drawable.bg_popup_option)
@@ -1843,7 +1900,6 @@ class NboardImeService : InputMethodService() {
 
     internal fun isPredictionRowInitialized(): Boolean = this::predictionRow.isInitialized
 
-    internal fun isBigramPredictorInitialized(): Boolean = this::bigramPredictor.isInitialized
 
     internal fun isSwipeTrailViewInitialized(): Boolean = this::swipeTrailView.isInitialized
 
