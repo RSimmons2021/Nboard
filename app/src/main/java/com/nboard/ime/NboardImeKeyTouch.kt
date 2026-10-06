@@ -282,6 +282,10 @@ internal fun NboardImeService.configureKeyTouch(
                     }
                     longPressRunnable = Runnable {
                         keyPressPreview.hide(touchedView)
+                        // The finger now slides through a pop-up (skin tones, variants, clipboard
+                        // actions): a scrolling parent must not take the gesture, or the cancel
+                        // would commit the option that was highlighted first.
+                        touchedView.parent?.requestDisallowInterceptTouchEvent(true)
                         longPressTriggered = true
                         swipeActiveForThisPointer = false
                         cancelSwipeTyping()

@@ -109,7 +109,9 @@ internal fun NboardImeService.renderEmojiSuggestions() {
     }
     val query = if (isEmojiSearchMode) emojiSearchInput.text?.toString()?.trim().orEmpty() else ""
     val candidates = if (query.isBlank()) {
-        mostUsedEmojis(emojiUsageCounts, DEFAULT_TOP_EMOJIS)
+        // Skin-tone variants count as one emoji; each key shows the tone last chosen.
+        mostUsedEmojis(emojiUsageCounts.entries.groupingBy { EmojiTones.base(it.key) }
+            .fold(0) { total, entry -> total + entry.value }, DEFAULT_TOP_EMOJIS)
     } else {
         filterEmojiCandidates(emojiSearchInput.text).take(MAX_EMOJI_SEARCH_SUGGESTIONS)
     }

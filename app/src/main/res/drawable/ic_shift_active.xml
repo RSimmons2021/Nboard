@@ -1,0 +1,7 @@
+<!-- Shift on for the next letter: filled up-arrow. Caps lock adds an underline (ic_caps_lock). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="@android:color/white"
+        android:pathData="M12,3L3,12H8V20H16V12H21Z" />
+</vector>

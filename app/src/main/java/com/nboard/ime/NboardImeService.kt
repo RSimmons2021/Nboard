@@ -1191,7 +1191,7 @@ class NboardImeService : InputMethodService() {
         shiftKeyView = addSpecialKey(
             row = row3,
             label = null,
-            iconRes = if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.ic_caps_lock else if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide,
+            iconRes = if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.ic_caps_lock else if (isShiftActive()) R.drawable.ic_shift_active else R.drawable.ic_arrow_up_lucide,
             iconTintRes = R.color.key_text,
             backgroundRes = if (manualShiftMode == ShiftMode.CAPS_LOCK) {
                 R.drawable.bg_mode_special_selected
@@ -1306,7 +1306,7 @@ class NboardImeService : InputMethodService() {
             if (view.text.toString() != label) view.text = label
         }
         shiftKeyView?.let { key ->
-            setIcon(key, if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.ic_caps_lock else if (isShiftActive()) R.drawable.ic_arrow_down_lucide else R.drawable.ic_arrow_up_lucide, R.color.key_text)
+            setIcon(key, if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.ic_caps_lock else if (isShiftActive()) R.drawable.ic_shift_active else R.drawable.ic_arrow_up_lucide, R.color.key_text)
             key.background = uiDrawable(if (manualShiftMode == ShiftMode.CAPS_LOCK) R.drawable.bg_mode_special_selected else R.drawable.bg_special_key)
             key.contentDescription = shiftKeyDescription()
         }
