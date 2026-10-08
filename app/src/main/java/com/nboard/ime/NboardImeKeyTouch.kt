@@ -165,21 +165,14 @@ internal fun NboardImeService.handleSpaceTap() {
     } else if (isEmojiSearchInputActive()) {
         appendEmojiSearchText(" ")
     } else {
-        val inputConnection = currentInputConnection
-        val charBeforeSpace = inputConnection
-            ?.getTextBeforeCursor(1, 0)
-            ?.toString()
-            ?.lastOrNull()
         commitKeyText(" ")
         if (isNumbersMode &&
-            charBeforeSpace?.isDigit() == true &&
             returnToLettersAfterNumberSpaceEnabled &&
             smartTypingBehavior.shouldReturnToLettersAfterNumberSpace()
         ) {
             isNumbersMode = false
             isSymbolsSubmenuOpen = false
-            renderKeyRows()
-            refreshUi()
+            refreshAutoShiftFromContextAndRerender(forceRerender = true)
         }
     }
 }

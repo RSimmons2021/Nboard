@@ -47,7 +47,7 @@ internal fun NboardImeService.refreshAutoShiftFromContext(beforeCursor: String? 
         isAutoShiftEnabled = false
         return
     }
-    if (!autoCapitalizeAfterPunctuationEnabled || !smartTypingBehavior.shouldAutoSpaceAndCapitalize()) {
+    if (!autoCapitalizeAfterPunctuationEnabled || !smartTypingBehavior.shouldAutoCapitalize()) {
         isAutoShiftEnabled = false
         return
     }
@@ -57,28 +57,7 @@ internal fun NboardImeService.refreshAutoShiftFromContext(beforeCursor: String? 
         ?.toString()
         .orEmpty()
 
-    val trimmed = textBeforeCursor.trimEnd()
-    if (trimmed.isEmpty()) {
-        isAutoShiftEnabled = true
-        return
-    }
-    val lastChar = trimmed.last()
-    if (lastChar == '\n') {
-        isAutoShiftEnabled = true
-        return
-    }
-    val previousChar = trimmed.getOrNull(trimmed.lastIndex - 1)
-    val last2Chars = if (trimmed.length >= 3) {
-        trimmed.substring(trimmed.length - 3, trimmed.length - 1)
-    } else {
-        null
-    }
-    isAutoShiftEnabled = smartTypingBehavior.shouldAutoSpaceAfterChar(
-        char = lastChar,
-        previousChar = previousChar,
-        last2Chars = last2Chars,
-        nextChar = null
-    )
+    isAutoShiftEnabled = smartTypingBehavior.shouldAutoCapitalizeAtCursor(textBeforeCursor)
 }
 
 internal fun NboardImeService.refreshAutoShiftFromContextAndRerender(forceRerender: Boolean = false) {

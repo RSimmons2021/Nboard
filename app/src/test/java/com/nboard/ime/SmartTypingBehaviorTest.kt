@@ -6,6 +6,47 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SmartTypingBehaviorTest {
+    @Test
+    fun sentenceCapitalizationRecognizesParagraphsAndPunctuationAcrossEditors() {
+        for (variation in listOf(InputType.TYPE_TEXT_VARIATION_NORMAL, InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT)) {
+            val behavior = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or variation)
+            for (text in listOf("", "   ", "Hello. ", "Hello!", "Hello? ", "hello\n", "hello\n  ",
+                "hello\r\n", "hello\r", "Meet at 5. ", "Wait... ", "\"Hello.\" ")) {
+                assertTrue("Must capitalize after '$text' in variation $variation", behavior.shouldAutoCapitalizeAtCursor(text))
+            }
+            for (text in listOf("hello", "hello ", "hello, ", "3.", "3.14", "hello\nworld ")) {
+                assertFalse("Must stay lowercase after '$text' in variation $variation", behavior.shouldAutoCapitalizeAtCursor(text))
+            }
+        }
+    }
+
+    @Test
+    fun structuredFieldsKeepTheirCasingAndNamesHonorEditorFlags() {
+        for (variation in listOf(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS, InputType.TYPE_TEXT_VARIATION_URI,
+            InputType.TYPE_TEXT_VARIATION_PASSWORD, InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)) {
+            val behavior = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or variation or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES)
+            assertFalse(behavior.shouldAutoCapitalizeAtCursor(""))
+            assertFalse(behavior.shouldAutoCapitalizeAtCursor("Hello. "))
+        }
+        val name = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PERSON_NAME or InputType.TYPE_TEXT_FLAG_CAP_WORDS)
+        assertTrue(name.shouldAutoCapitalizeAtCursor(""))
+        assertTrue(name.shouldAutoCapitalizeAtCursor("Jane "))
+        assertFalse(name.shouldAutoCapitalizeAtCursor("Ja"))
+        assertFalse(name.shouldAutoSpaceAndCapitalize())
+        val capitals = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
+        assertTrue(capitals.shouldAutoCapitalizeAtCursor("abc"))
+        assertFalse(SmartTypingBehavior(InputType.TYPE_CLASS_NUMBER).shouldAutoCapitalizeAtCursor(""))
+    }
+
+    @Test
+    fun webFormTextSupportsSentenceCapitalization() {
+        val web = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT)
+        assertTrue(web.shouldAutoSpaceAndCapitalize())
+        assertTrue(web.shouldAutoCapitalizeAfterChar('.'))
+    }
+
     @org.junit.Test
     fun `personalization is disabled for passwords and private editors`() {
         org.junit.Assert.assertFalse(SmartTypingBehavior(android.text.InputType.TYPE_CLASS_TEXT or
@@ -36,7 +77,6 @@ class SmartTypingBehaviorTest {
     fun autoSpaceAndCapitalize_disabledForSpecialFields() {
         val email = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
         val url = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
-        val webEdit = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT)
         val webEmail =
             SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS)
         val password = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
@@ -48,7 +88,6 @@ class SmartTypingBehaviorTest {
 
         assertFalse(email.shouldAutoSpaceAndCapitalize())
         assertFalse(url.shouldAutoSpaceAndCapitalize())
-        assertFalse(webEdit.shouldAutoSpaceAndCapitalize())
         assertFalse(webEmail.shouldAutoSpaceAndCapitalize())
         assertFalse(password.shouldAutoSpaceAndCapitalize())
         assertFalse(visiblePassword.shouldAutoSpaceAndCapitalize())

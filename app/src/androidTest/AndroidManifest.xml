@@ -3,5 +3,7 @@
     <application>
         <activity android:name="com.nboard.ime.KeyboardBenchmarkActivity"
             android:exported="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity android:name="com.nboard.ime.KeyboardBrowserTestActivity"
+            android:exported="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>

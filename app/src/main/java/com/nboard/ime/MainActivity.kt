@@ -903,7 +903,7 @@ class MainActivity : AppCompatActivity() {
         val selected = if (enabled) 0 else 1
 
         AlertDialog.Builder(this)
-            .setTitle("Return to letters after numbers")
+            .setTitle("Return to letters after Space")
             .setSingleChoiceItems(options, selected) { dialog, which ->
                 KeyboardModeSettings.saveReturnToLettersAfterNumberSpaceEnabled(this, which == 0)
                 refreshValues()

@@ -105,7 +105,7 @@ internal fun NboardImeService.invalidatePredictions() {
 /** One editor read per UI refresh, shared by shift and prediction. Never retained across edits. */
 internal fun NboardImeService.readKeyboardContext(): String {
     if (!shouldShowPredictionRow() &&
-        !(autoCapitalizeAfterPunctuationEnabled && smartTypingBehavior.shouldAutoSpaceAndCapitalize())) return ""
+        !(autoCapitalizeAfterPunctuationEnabled && smartTypingBehavior.shouldAutoCapitalize())) return ""
     return currentInputConnection?.getTextBeforeCursor(PREDICTION_CONTEXT_WINDOW, 0)?.toString().orEmpty()
 }
 

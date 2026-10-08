@@ -609,7 +609,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:fontFamily="@font/inter_variable"
-                    android:text="Return to letters after numbers"
+                    android:text="Return to letters after Space"
                     android:textColor="?android:attr/textColorPrimary"
                     android:textSize="15sp" />
 
