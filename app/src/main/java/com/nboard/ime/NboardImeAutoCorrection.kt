@@ -328,6 +328,12 @@ internal fun NboardImeService.shouldRunDictionaryApostropheFallback(source: Stri
     if (ENGLISH_TYPOS.containsKey(normalized) || FRENCH_TYPOS.containsKey(normalized)) {
         return true
     }
+    // The remaining checks look for French elisions ("lami" -> "l'ami"). That search takes
+    // 160-240 ms on a Nothing A024, so English typing must not pay it for every unknown
+    // word that starts with c, d, j, l, m, n, s or t.
+    if (!isLanguageEnabled(KeyboardLanguageMode.FRENCH)) {
+        return false
+    }
     if (normalized.startsWith("qu") || normalized.startsWith("jusqu")) {
         return true
     }
