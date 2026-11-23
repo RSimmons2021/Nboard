@@ -62,11 +62,13 @@ internal class PhraseMemory(private val capacity: Int = 2048) {
         for (length in reliableLength..tokens.size) {
             val suffix = tokens.takeLast(length).joinToString("|")
             for (scope in listOf("", app).distinct()) {
-                index[Key(language, scope, suffix)].orEmpty().values.forEach { entry ->
+                val continuations = index[Key(language, scope, suffix)] ?: continue
+                val observations = continuations.values.sumOf { it.count }
+                continuations.values.forEach { entry ->
                     if (entry.count < 2) return@forEach // One accidental acceptance is not a recurring phrase.
                     val age = (now - entry.lastUsed).coerceAtLeast(0) / 86_400_000.0
                     val score = ln(1.0 + entry.count) * 2.0 + (length - 1) * .8 +
-                        1.2 / (1 + age / 30) + if (scope.isNotEmpty()) .7 else 0.0
+                        1.2 / (1 + age / 30) + entry.count.toDouble() / observations + if (scope.isNotEmpty()) .7 else 0.0
                     result[entry.word] = maxOf(result[entry.word] ?: 0.0, score)
                 }
             }

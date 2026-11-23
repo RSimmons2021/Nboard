@@ -68,6 +68,17 @@ class PhraseMemoryTest {
         memory.clear()
         assertTrue(memory.snapshot().isEmpty())
     }
+    @Test fun consistentContinuationGetsMoreWeightThanAnEquallyFrequentAmbiguousOne() {
+        val memory = PhraseMemory()
+        repeat(3) {
+            memory.record("our usual", "place", "ENGLISH", "", now)
+            memory.record("the next", "place", "ENGLISH", "", now)
+            memory.record("the next", "time", "ENGLISH", "", now)
+        }
+        assertTrue(memory.suggestions("our usual", "ENGLISH", "", now).getValue("place") >
+            memory.suggestions("the next", "ENGLISH", "", now).getValue("place"))
+    }
+
     @Test fun temporalEvaluationUsesOnlyPastObservationsAndDecay() {
         val memory = PhraseMemory()
         val context = "meet me at "

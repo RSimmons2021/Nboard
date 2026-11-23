@@ -31,6 +31,7 @@ class Phrases:
     """PhraseMemory with tunable minimum context and minimum count."""
     def __init__(self, min_context, capacity=2048):
         self.min_context, self.capacity = min_context, capacity
+        self.size = 0
         self.index = defaultdict(dict)  # context -> word -> [count, last]
 
     def record(self, context, word, now):
@@ -39,12 +40,15 @@ class Phrases:
         if len(previous) < self.min_context or not re.fullmatch(r"[a-z]+(?:'[a-z]+)*", word) or len(word) > 24:
             return
         for length in range(self.min_context, len(previous) + 1):
-            entry = self.index['|'.join(previous[-length:])].setdefault(word, [0, now])
+            scope = self.index['|'.join(previous[-length:])]
+            if word not in scope: self.size += 1
+            entry = scope.setdefault(word, [0, now])
             entry[0] = min(entry[0] + 1, 1000); entry[1] = now
-        size = sum(len(v) for v in self.index.values())
+        size = self.size
         if size > self.capacity:
             ranked = sorted(((c, w, e) for c, ws in self.index.items() for w, e in ws.items()),
-                            key=lambda x: -math.log(1 + x[2][0]) / (1 + (now - x[2][1]) / (90 * DAY)))[:self.capacity]
+                            key=lambda x: -math.log(1 + x[2][0]) / (1 + (now - x[2][1]) / (90 * DAY)))[:self.capacity * 9 // 10]
+            self.size = len(ranked)
             self.index = defaultdict(dict)
             for c, w, e in ranked:
                 self.index[c][w] = e
@@ -56,11 +60,13 @@ class Phrases:
         start = max(reliable) if reliable else max(self.min_context, 2 if self.min_context >= 2 else 1)
         result = {}
         for length in range(start, len(tokens) + 1):
-            for word, (count, last) in self.index.get('|'.join(tokens[-length:]), {}).items():
+            continuations = self.index.get('|'.join(tokens[-length:]), {})
+            observations = sum(count for count, _ in continuations.values())
+            for word, (count, last) in continuations.items():
                 if count < min_count:
                     continue
                 age = max(now - last, 0) / DAY
-                score = math.log(1 + count) * 2 + (length - 1) * .8 + 1.2 / (1 + age / 30)
+                score = math.log(1 + count) * 2 + (length - 1) * .8 + 1.2 / (1 + age / 30) + count / observations
                 result[word] = max(result.get(word, 0), score)
         return result
 
