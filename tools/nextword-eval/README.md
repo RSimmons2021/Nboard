@@ -160,3 +160,21 @@ cut before ranking. The strongest recalled continuation now keeps the last slot.
 
 On the 1,200-case habit replay, top-three hits on repeated phrases went from 285 to 296
 (paused 303 to 313); general text stayed at 142.
+
+### Held-out next words against Gboard (2026-11-23, Nothing A024)
+
+`GboardComparisonDeviceTest#nextWordComparison` with `-e fullType 1` types each context
+with keys into the keyboard (Gboard ignores text placed in the field), then reads the
+strip. 100 cases from `nextword_test.tsv` whose context is letters and spaces only:
+
+| Keyboard | Top three, all 100 | Top three, the 76 where Gboard showed suggestions |
+|---|---:|---:|
+| Gboard 18.4 | 12 | 12 |
+| Nboard | 19 | 13 |
+
+Gboard showed its toolbar instead of suggestions after 24 contexts. Where only Gboard
+had the word, it was a very common conversational continuation ("would you" -> "like",
+"have you ever" -> "had", "thank you" -> "so"), where Nboard ranked rarer words. Weighting
+of frequent conversational pairs is the next ranking experiment; tune it on the dev set
+with `fit_blend.py`, not on these cases. The sample is small and both keyboards kept
+their own history.

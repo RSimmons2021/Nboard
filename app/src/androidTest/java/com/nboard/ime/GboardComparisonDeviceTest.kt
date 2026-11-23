@@ -174,16 +174,20 @@ class GboardComparisonDeviceTest {
         val keyboard = arguments.getString("keyboard") ?: return assumeTrue(false)
         val folder = requireNotNull(instrumentation.targetContext.getExternalFilesDir(null))
         val limit = arguments.getString("limit")?.toIntOrNull() ?: 150
+        val fullType = arguments.getString("fullType") == "1"
         val cases = File(folder, "nextword-cases.tsv").readLines().map { it.split('\t') }
             .map { listOf(it[0].trimEnd()) + it.drop(1) }
             .filter { it.size >= 2 && it[0].substringAfterLast(' ').let { w -> w.isNotEmpty() && w.all { c -> c in 'a'..'z' || c in 'A'..'Z' } } }
+            .filter { !fullType || it[0].all { c -> c == ' ' || c in 'a'..'z' || c in 'A'..'Z' } }
             .take(limit)
         val out = File(folder, "nextword-$keyboard.tsv")
         fun run(place: (String) -> Unit, typeKeys: (String) -> Unit, row: () -> List<String>) = out.printWriter().use { writer ->
             for ((context, expected) in cases) {
-                val lead = context.substringBeforeLast(' ', "").let { if (it.isEmpty()) it else "$it " }
+                // "-e fullType 1": type the whole context with keys. Gboard ignores text placed
+                // in the field, so this is the fair protocol for it (letters and spaces only).
+                val lead = if (fullType) "" else context.substringBeforeLast(' ', "").let { if (it.isEmpty()) it else "$it " }
                 place(lead)
-                typeKeys(context.substringAfterLast(' ') + " ")
+                typeKeys((if (fullType) context else context.substringAfterLast(' ')) + " ")
                 SystemClock.sleep(SETTLE_MS)
                 val shown = row()
                 writer.println(listOf(context, expected, shown.joinToString("|"), expected.lowercase() in shown).joinToString("\t"))
