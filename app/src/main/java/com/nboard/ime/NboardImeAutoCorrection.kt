@@ -215,6 +215,7 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
     val previousWord = extractPreviousWordForAutoCorrection(beforeCursor, sourceWord)
     val contextLanguage = detectContextLanguage(beforeCursor)
     var suggestion = if (ownWord) null else lookupTypoCorrection(normalizedSource, contextLanguage)
+    val fromTypoTable = suggestion != null
     // A recognised word (any loaded word list, texting vocabulary) is never replaced by a
     // guess; only the explicit typo table above may change it ("untill" -> "until").
     val known = ownWord || isKnownWord(normalizedSource)
@@ -233,6 +234,17 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
     // mappings above still apply (e.g. cant -> can't).
     if (suggestion == null && !known && shouldRunDictionaryApostropheFallback(normalizedSource)) {
         suggestion = findBestDictionaryCorrection(normalizedSource, contextLanguage)
+    }
+    // The explicit typo table is deliberate ("cant" -> "can't"); only guesses get a second opinion.
+    if (!fromTypoTable && !known) {
+        systemSpellLocale()?.let { locale ->
+            systemSpellCheck.verdict(normalizedSource, locale, SYSTEM_SPELL_CHECK_WAIT_MS)?.let { verdict ->
+                val englishLocale = locale.language == "en"
+                suggestion = combineWithSystemSpellCheck(normalizedSource, suggestion?.let(::normalizeWord), verdict) {
+                    englishLocale && autoCorrectEngine.isCommonEnglishWord(it)
+                }
+            }
+        }
     }
     val english = usesEnglishCasing()
     suggestion = suggestion?.let(::normalizeWord)
@@ -257,6 +269,19 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
         return null
     }
     return replaceCorrectedWord(inputConnection, sourceWord, correctedWord, trailing)
+}
+
+/**
+ * The locale to ask the system spell checker in, or null when it should not be asked: mixed
+ * English/French typing (no single locale), and password fields, whose text stays in Nboard.
+ */
+internal fun NboardImeService.systemSpellLocale(): java.util.Locale? {
+    if (isPasswordInputType(currentInputEditorInfo?.inputType ?: 0)) return null
+    return when (keyboardLanguageMode) {
+        KeyboardLanguageMode.ENGLISH -> java.util.Locale.US
+        KeyboardLanguageMode.FRENCH -> java.util.Locale.FRANCE
+        else -> null
+    }
 }
 
 private fun replaceCorrectedWord(inputConnection: InputConnection, sourceWord: String, correctedWord: String,

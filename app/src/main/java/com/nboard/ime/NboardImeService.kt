@@ -251,6 +251,8 @@ class NboardImeService : InputMethodService() {
     @Volatile
     internal var frenchLexicon = Lexicon.empty()
     internal lateinit var autoCorrectEngine: AutoCorrect
+    /** Second opinion from the phone's spell checker (usually Gboard's); see combineWithSystemSpellCheck. */
+    internal val systemSpellCheck by lazy { SystemSpellCheck(applicationContext) }
 
     internal var activePopupWindow: PopupWindow? = null
     internal var activeVariantSession: VariantSelectionSession? = null
@@ -348,6 +350,7 @@ class NboardImeService : InputMethodService() {
         destroyVoiceRecognizer()
         getSharedPreferences(KeyboardModeSettings.PREFS_NAME, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(learningResetListener)
         savePredictionLearning(force = true)
+        systemSpellCheck.close()
         recentClipboardExpiryJob?.cancel()
         clipboardManager?.removePrimaryClipChangedListener(clipboardListener)
         if (::predictionRow.isInitialized) predictionRow.disposeComposition()

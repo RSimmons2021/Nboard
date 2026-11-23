@@ -76,6 +76,35 @@ above 30 ms; frame p95 was 30.8 ms, so some rendering jitter remains.
 JVM tests include temporal
 history use, capacity limits, recency, language/app scope and sentence boundaries.
 
+## System spell checker as a second opinion (2026-11-23)
+
+Space asks the phone's system spell checker (Gboard's on the Nothing A024) about the
+word being typed. Requests start while letters are typed; Space waits at most 35 ms for
+an answer still in flight. Nboard keeps the decision:
+
+- a word the checker accepts is never replaced (names, slang and brands it knows);
+- Nboard's own correction stands when the checker also flags a typo;
+- with no correction of its own, Nboard takes the checker's top suggestion only when it
+  is lower-case, one edit away (an adjacent swap counts as one) and among the 10,000
+  most frequent English words.
+
+French uses only the first two rules. Mixed English/French typing and password fields
+never query the checker. The explicit typo table ("cant" -> "can't") is not second-guessed.
+
+`SpellCorrectionBenchmark` cases (1,500 simulated touch typos, 1,500 Birkbeck human
+misspellings, 42 intended names and slang) replayed through Gboard's checker on the phone:
+
+| Strategy | Touch fixed / wrong | Human fixed / wrong | Names and slang changed |
+| --- | --- | --- | --- |
+| Nboard engine alone | 43.0% / 8.8% | 25.3% / 11.9% | 17 / 42 |
+| Checker's top suggestion alone | 34.6% / 30.6% | 51.1% / 28.5% | 5 / 42 |
+| Combined rules above | 46.3% / 8.0% | 27.9% / 10.8% | 5 / 42 |
+
+The engine row is the JVM `AutoCorrect` without the service's known-word guards, so the
+phone already overcorrects fewer names than shown. Checker answers took 18 ms median and
+34 ms at the 95th percentile. Its "recommended" flag was set on every typo, so it carries
+no confidence signal. On the phone, typing at 15 ms between keys kept Space under 33 ms.
+
 ## Implementation order
 
 1. **Establish a next-word benchmark.** Use thousands of held-out conversational

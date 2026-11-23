@@ -26,7 +26,9 @@ class AutoCorrect(
     /** Frequencies live in the trie only; [size] is the word count. */
     private data class FrequencyDictionary(
         val size: Int,
-        val trie: DictionaryTrie
+        val trie: DictionaryTrie,
+        /** Frequency of the [COMMON_WORD_RANK]th most frequent word. */
+        val commonFrequencyFloor: Int = Int.MAX_VALUE
     ) {
         fun frequency(word: String): Int = trie.frequency(word) ?: 0
 
@@ -105,6 +107,14 @@ class AutoCorrect(
         val normalized = normalizeWord(word)
         return (language != KeyboardLanguageMode.FRENCH && englishDictionary.contains(normalized)) ||
             (language != KeyboardLanguageMode.ENGLISH && frenchDictionary.contains(normalized))
+    }
+
+    /** Among the 10,000 most frequent English words. Nonblocking; false until loaded. */
+    internal fun isCommonEnglishWord(word: String): Boolean {
+        if (!loaded) return false
+        val dictionary = englishDictionary
+        val frequency = dictionary.trie.frequency(normalizeWord(word)) ?: return false
+        return frequency >= dictionary.commonFrequencyFloor
     }
 
     fun setMode(newMode: AutoCorrectMode) {
@@ -300,9 +310,11 @@ class AutoCorrect(
             trie.insert(word, frequency)
         }
         trie.freeze()
+        val sorted = frequencies.values.sortedDescending()
         return FrequencyDictionary(
             size = frequencies.size,
-            trie = trie
+            trie = trie,
+            commonFrequencyFloor = sorted[minOf(COMMON_WORD_RANK, sorted.size) - 1]
         )
     }
 
@@ -322,6 +334,7 @@ class AutoCorrect(
     companion object {
         private const val MIN_WORD_LENGTH = 2
         private const val MAX_WORD_LENGTH = 24
+        private const val COMMON_WORD_RANK = 10_000
 
         private val WHITESPACE_REGEX = Regex("\\s+")
         private val WORD_PATTERN = Regex("[a-zàâäæçéèêëîïôöùûüÿœ]+(?:['-][a-zàâäæçéèêëîïôöùûüÿœ]+)*")

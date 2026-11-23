@@ -19,6 +19,8 @@ const val VARIANT_LONG_PRESS_TIMEOUT_MS = 240L
 const val AUTO_SHIFT_CONTEXT_WINDOW = 80
 const val AUTOCORRECT_CONTEXT_WINDOW = 40
 const val AUTOCORRECT_SLOW_LOG_THRESHOLD_MS = 50L
+/** Longest Space waits for a spell checker answer still in flight (median answer 18 ms, p95 34 ms). */
+const val SYSTEM_SPELL_CHECK_WAIT_MS = 35L
 const val PREDICTION_CONTEXT_WINDOW = 800
 const val MAX_WORD_PREDICTIONS = 3
 const val MAX_PREDICTION_CANDIDATES = 3

@@ -137,6 +137,16 @@ class SpellCorrectionBenchmark {
         val current = AutoCorrect(emptyMap(), frequencies, AutoCorrect.AutoCorrectMode.ENGLISH_ONLY, cacheCapacity = 1)
         repeat(2) { current.correct("warmup", null) }
         report("current") { typed, previous -> current.correct(typed, previous) }
+        // Cases plus this engine's answers, for replaying through a phone's system spell checker
+        // (SystemSpellCheckDeviceTest) and comparing the two. Columns: set, typed, expected, nboard.
+        System.getenv("NBOARD_SPELL_DUMP")?.let { path ->
+            File(path).printWriter().use { out ->
+                val sets = listOf("A" to touchCases(), "B" to humanCases(), "C" to intendedUnknownWords().map { Case(it, it, null) })
+                for ((set, cases) in sets) for (case in cases) {
+                    out.println(listOf(set, case.typed, case.expected, current.correct(case.typed, case.previous).orEmpty()).joinToString("\t"))
+                }
+            }
+        }
 
         val trie = DictionaryTrie().apply { frequencies.forEach { (w, f) -> insert(w, f) } }
         val totals = bigrams.mapValues { (_, next) -> next.values.sum().toDouble() }

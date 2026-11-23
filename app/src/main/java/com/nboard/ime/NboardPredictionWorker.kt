@@ -167,6 +167,8 @@ internal fun NboardImeService.requestPredictions(beforeCursor: String? = null) {
     pendingBoundaryPrediction?.cancel()
     pendingBoundaryPrediction = null
     val fragment = extractCurrentWordFragment(before)
+    // Ask the system spell checker now, so its answer is ready when the word ends.
+    systemSpellLocale()?.let { locale -> systemSpellCheck.prefetch(fragment, locale) }
     val context = before.dropLast(fragment.length)
     // Keep the current row drawn until the next one is ready (one visual change per
     // keystroke). Its words cannot be inserted while they are out of date.
