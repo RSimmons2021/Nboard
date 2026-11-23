@@ -133,3 +133,30 @@ Separate Nboard replay, with the installed SmolLM2-135M Q4_K_M:
 In the conversational replay, inference and ranking took 34/69 ms p50/p95
 for the first pass and 109/227 ms for the pause pass, excluding the 220 ms
 delay. The first two positions are held fixed during the pause pass.
+
+### Phrase learning curve against Gboard (2026-11-23, Nothing A024)
+
+`GboardComparisonDeviceTest` types six invented phrases into each keyboard (Gboard with
+real key taps, Nboard through its key handler), one exposure per round in rotated order,
+and probes after each round with the full lead-in, only the last two or three words, and
+a different opening. Run `phraseLearningCurve` (`-e gboard 1`) and
+`nboardPhraseLearningCurve` (`-e nboard 1`) with `-e set b -e rounds 3`; a keyboard that
+has already seen a set cannot measure its first exposures again. Nboard's learned data
+is restored afterwards; Gboard keeps the practice phrases in its own history.
+
+Top-three hits out of 6, after 1 / 2 / 3 exposures:
+
+| Probe | Gboard 18.4 | Nboard before | Nboard after |
+|---|---|---|---|
+| Full lead-in | 2 / 3 / 5 | 1 / 3 / 5 | 1 / 6 / 6 |
+| Last two words | 2 / 4 / 5 | 0 / 1 / 1 | 1 / 6 / 6 |
+| Last three words | 2 / 3 / 4 | 0 / 1 / 2 | 1 / 6 / 6 |
+| Different opening | 2 / 2 / 3 | 0 / 2 / 5 | 1 / 6 / 6 |
+
+Gboard can surface a word after one use and leans on the last two words. Nboard keeps
+its two-observation rule, so one stray word does not become a habit. Before the change,
+general words outranked a recalled word at short contexts, and rare recalled words were
+cut before ranking. The strongest recalled continuation now keeps the last slot.
+
+On the 1,200-case habit replay, top-three hits on repeated phrases went from 285 to 296
+(paused 303 to 313); general text stayed at 142.

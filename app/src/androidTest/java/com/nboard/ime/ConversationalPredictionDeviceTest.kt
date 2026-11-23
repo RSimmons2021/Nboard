@@ -62,6 +62,8 @@ class ConversationalPredictionDeviceTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val mode = InstrumentationRegistry.getArguments().getString("pauseCases") ?: "nextword_test"
+        // "-e phraseSlot 0" ranks without the recalled-phrase slot, for before/after comparisons.
+        val phraseSlot = InstrumentationRegistry.getArguments().getString("phraseSlot") != "0"
         val file = File(context.filesDir, "eval/$mode.tsv")
         assumeTrue("Copy the cases and pause model into private storage", file.isFile &&
             File(context.filesDir, LocalPredictionEngine.PAUSE_MODEL_PATH).isFile)
@@ -75,7 +77,8 @@ class ConversationalPredictionDeviceTest {
                 val request = request(learned, sentence, "")
                 val started = System.nanoTime()
                 val local = engine.candidates(request)
-                val first = PredictionRanker.stableTop(engine.refine(request, local), emptyList())
+                val first = PredictionRanker.stableTop(engine.refine(request, local), emptyList(),
+                    phrases = if (phraseSlot) request.phrases else emptyMap())
                 firstTimes += (System.nanoTime() - started) / 1e6
                 val pauseStart = System.nanoTime()
                 val refined = if (first.size == 3 && first.last() !in request.phrases)

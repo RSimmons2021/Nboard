@@ -52,4 +52,15 @@ class PredictionRankerTest {
         assertEquals("back", PredictionRanker.stableTop(candidates.map { if (it.word=="back") it.copy(score=7.0) else it }, listOf("home", "back")).first())
         assertEquals(listOf("back", "home"), PredictionRanker.stableTop(candidates, listOf("invalid")))
     }
+
+    @Test fun recalledPhraseTakesTheLastSlotWithoutDisplacingTheTopTwo() {
+        val candidates = listOf(PredictionCandidate("first", 9.0), PredictionCandidate("world", 8.0),
+            PredictionCandidate("front", 7.0), PredictionCandidate("woodstove", 5.0), PredictionCandidate("wood", 4.0, correction = true))
+        assertEquals(listOf("first", "world", "woodstove"),
+            PredictionRanker.stableTop(candidates, emptyList(), phrases = mapOf("woodstove" to 4.2, "wood" to 9.0)))
+        // Already visible: nothing moves.
+        assertEquals(listOf("first", "world", "front"),
+            PredictionRanker.stableTop(candidates, emptyList(), phrases = mapOf("world" to 4.0, "woodstove" to 3.0)))
+        assertEquals(listOf("first", "world", "front"), PredictionRanker.stableTop(candidates, emptyList()))
+    }
 }

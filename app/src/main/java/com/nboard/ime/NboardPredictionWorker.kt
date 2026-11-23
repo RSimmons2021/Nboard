@@ -121,7 +121,7 @@ private fun NboardImeService.canPublishPredictions(work: PredictionWork): Boolea
 
 private fun NboardImeService.publishPredictions(work: PredictionWork, candidates: List<PredictionCandidate>) {
     if (!canPublishPredictions(work)) return
-    publishRankedPredictions(work, PredictionRanker.stableTop(candidates, lastRankedPredictions))
+    publishRankedPredictions(work, PredictionRanker.stableTop(candidates, lastRankedPredictions, phrases = work.request.phrases))
 }
 
 private fun NboardImeService.publishRankedPredictions(work: PredictionWork, ranked: List<String>) {

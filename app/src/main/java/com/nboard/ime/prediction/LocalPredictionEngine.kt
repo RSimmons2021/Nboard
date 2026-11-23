@@ -65,7 +65,10 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
                 if (c.score > (result[word]?.score ?: Double.NEGATIVE_INFINITY)) result[word] = c
             }
         }
-        return result.values.sortedByDescending { it.score }.take(36)
+        val ranked = result.values.sortedByDescending { it.score }
+        // A recalled phrase word survives the cut even when rare words score low, so
+        // PredictionRanker.stableTop can still give it the last slot.
+        return ranked.take(36) + ranked.drop(36).filter { it.word in request.phrases }
     }
 
     fun refine(request: PredictionRequest, local: List<PredictionCandidate>, discoverWords: Boolean = true): List<PredictionCandidate> {
