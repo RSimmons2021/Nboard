@@ -15,6 +15,8 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
     private var french: Dictionary? = null
     private var neural: NeuralPredictor? = null
     private var attemptedNeural = false
+    private var pauseModel: NeuralPredictor? = null
+    private var attemptedPauseModel = false
 
     private fun dictionary(language: String): Dictionary {
         val existing = if (language == "english") english else french
@@ -79,6 +81,30 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
         }
         val scores = modelLikelihoods(request, local, discoverWords) ?: return local
         return combine(request, local, scores)
+    }
+
+    /** The pause worker owns this optional model independently of the first-pass worker. */
+    fun refineAfterPause(request: PredictionRequest, local: List<PredictionCandidate>, visible: List<String>): List<PredictionCandidate>? {
+        if (!isPauseRefinementEligible(request)) return null
+        if (!attemptedPauseModel) {
+            attemptedPauseModel = true
+            if (!com.nboard.ime.BuildConfig.DEBUG) return null
+            val file = File(context.filesDir, PAUSE_MODEL_PATH)
+            if (!file.isFile) return null
+            pauseModel = try {
+                NeuralPredictor(file.absolutePath, dictionary("english").frequencies.keys.toList())
+            } catch (e: Exception) {
+                Log.w("NboardPrediction", "Pause model unavailable", e)
+                null
+            } catch (e: LinkageError) {
+                Log.w("NboardPrediction", "Pause model runtime unavailable", e)
+                null
+            }
+        }
+        val model = pauseModel ?: return null
+        val scores = model.score(request.context, "", (visible + local.map { it.word }).distinct().take(24))
+        if (scores.isEmpty()) return null
+        return combine(request, local, scores, GENERAL_MODEL_NEXT_WORD)
     }
 
     /** Model log-likelihood of each whole word after the context, or null without a model. */
@@ -180,7 +206,12 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
         return target
     }
 
-    override fun close() { neural?.close(); neural = null }
+    override fun close() {
+        neural?.close()
+        neural = null
+        pauseModel?.close()
+        pauseModel = null
+    }
     companion object {
         /**
          * Danish function words that the bilingual model predicts and the subtitle-derived
@@ -189,6 +220,7 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
         private val DANISH_NOISE = setOf("og", "det", "er", "jeg", "ikke", "på", "har", "af", "som", "så",
             "hvad", "skal", "vil", "kan", "hun", "mig", "sig", "hende", "jer", "dem", "nu", "du", "ud", "fra",
             "hvor", "godt", "hej", "tak", "nej", "ja", "være", "blive", "også", "meget", "noget", "ingen")
+        const val PAUSE_MODEL_PATH = "models/pause.gguf"
         const val MODEL_SHA = "47b3a97a80ab96df2c7148b8bb155f471d0fe74bffed392c0c4ea220d36ea5f8"
         // Fitted per model on held-out conversational text (tools/nextword-eval/fit_blend.py, dev split).
         internal val KEYBOARD_MODEL_NEXT_WORD = BlendWeights(priorDrop = 1.0, likelihood = .5)

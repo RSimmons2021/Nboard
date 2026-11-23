@@ -72,3 +72,64 @@ model, `ConversationalPredictionDeviceTest` with `files/eval/history.txt`):
 
 The simulated history is other people's text, so it shows the harm of context-free bonuses
 but understates the benefit of a user's own repeated pairs and phrases.
+
+## Compare the visible strip across keyboards
+
+Use [keyboard-comparison.tsv](keyboard-comparison.tsv) with English enabled and
+predictions visible in a regular multiline text field. Use a scratch editor and
+keep existing keyboard history. Type each context plus one trailing space using
+the keyboard itself. Record the primary next-word suggestion and the visible
+three after 500 ms. Compare case-insensitively. Ignore punctuation wrapped
+around a suggestion, but retain internal apostrophes.
+
+Record unfamiliar prompts once. For the habit prompts, first record a baseline.
+Then type each full context and expected word followed by a space three times,
+in a different order each round. Reopen the editor and record the habit prompts
+again. Use the same procedure on all keyboards.
+
+Report primary and top-three hits separately for each group. Compare habit
+recall before and after practice. For Nboard, also record the first settled row
+and the row at 500 ms to count changes. For Gboard and iOS, use the keyboard's
+highlighted suggestion as primary. If the display doesn't show a clear primary,
+record the three slots and report top-three only.
+
+The small comparison checks behavior and provides a shared device protocol.
+Use the full held-out corpus for engine decisions. A single plausible target
+per prompt measures whether the intended word appeared. It cannot measure
+whether every visible alternative was reasonable.
+
+The optional Android debug experiment uses a locally supplied SmolLM2-135M
+Q4_K_M GGUF. Upload it to `files/models/pause.gguf` in Nboard's private
+storage and restart Nboard. The file is separate from `override.gguf`, which
+replaces the first model. Run `ConversationalPredictionDeviceTest#comparePauseRefinement`
+with `files/eval/nextword_test.tsv` to compare initial and paused top-three
+accuracy, first-pass and pause inference latency, and how often the last slot
+changes. For the habit replay, use `-e pauseCases habit_cases -e phraseCapacity 65536`
+and provide `files/eval/habit_cases.tsv` and `files/eval/habit_cases_history.txt`.
+
+### Nothing A024 comparison (2026-11-23)
+
+| Top-three hits | Nboard debug build with pause model | Gboard 18.4 |
+|---|---:|---:|
+| Unfamiliar prompts | 6/12 | 9/12 |
+| Habit prompts before practice | 0/8 | 0/8 |
+| Habit prompts after three exposures | 7/8 | 4/8 |
+
+Gboard prompts were entered with key taps. Nboard used the same text in the
+scratch editor and three observations in a temporary phrase memory. Existing
+Gboard history was retained. The practice methods and history differ, so the
+habit scores illustrate behavior on these prompts. They do not establish a
+general ranking. The Gboard row showed no clear primary slot, so the table
+uses top-three hits.
+
+Separate Nboard replay, with the installed SmolLM2-135M Q4_K_M:
+
+| Replay group | Cases | First top three | Paused top three | Right slot changed |
+|---|---:|---:|---:|---:|
+| Held-out conversational text | 1,200 | 348 (29.0%) | 384 (32.0%) | 537 (44.8%) |
+| Repeated phrases with simulated history | 600 | 285 (47.5%) | 303 (50.5%) | 230 (38.3%) |
+| General text with simulated history | 600 | 142 (23.7%) | 163 (27.2%) | 220 (36.7%) |
+
+In the conversational replay, inference and ranking took 34/69 ms p50/p95
+for the first pass and 109/227 ms for the pause pass, excluding the 220 ms
+delay. The first two positions are held fixed during the pause pass.

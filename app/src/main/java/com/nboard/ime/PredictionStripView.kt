@@ -61,6 +61,16 @@ class PredictionStripView @JvmOverloads constructor(context: Context, attrs: Att
     var foreground by mutableStateOf(Color.White)
     var useRoboto by mutableStateOf(false)
     var onAccept: (String) -> Unit = {}
+    internal var isTouchInProgress = false
+        private set
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> isTouchInProgress = true
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> isTouchInProgress = false
+        }
+        return super.dispatchTouchEvent(event)
+    }
 
     @Composable override fun Content() {
         PredictionStrip(words, motion.animates, foreground, useRoboto, acceptSuggestions, typed, motion, onAccept)

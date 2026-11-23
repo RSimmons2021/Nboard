@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.nboard.ime.prediction.LocalPredictionEngine
 import com.nboard.ime.prediction.PredictionRanker
 import com.nboard.ime.prediction.PredictionRequest
+import com.nboard.ime.prediction.refineVisiblePredictions
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
@@ -56,6 +57,48 @@ class ConversationalPredictionDeviceTest {
     private fun request(history: History?, context: String, prefix: String) = if (history == null) PredictionRequest(context, prefix, "ENGLISH")
         else PredictionRequest(context, prefix, "ENGLISH", history.words, history.bigrams, history.trigrams, history.lastUsed,
             phrases = history.phrases.suggestions(context, "ENGLISH", "", System.currentTimeMillis()))
+
+    @Test fun comparePauseRefinement() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val mode = InstrumentationRegistry.getArguments().getString("pauseCases") ?: "nextword_test"
+        val file = File(context.filesDir, "eval/$mode.tsv")
+        assumeTrue("Copy the cases and pause model into private storage", file.isFile &&
+            File(context.filesDir, LocalPredictionEngine.PAUSE_MODEL_PATH).isFile)
+        val learned = history(File(context.filesDir, "eval/${mode}_history.txt"))
+        val results = linkedMapOf<String, IntArray>()
+        val firstTimes = mutableListOf<Double>()
+        val pauseTimes = mutableListOf<Double>()
+        LocalPredictionEngine(context).use { engine ->
+            file.forEachLine { line ->
+                val (sentence, expected, source) = line.split('\t')
+                val request = request(learned, sentence, "")
+                val started = System.nanoTime()
+                val local = engine.candidates(request)
+                val first = PredictionRanker.stableTop(engine.refine(request, local), emptyList())
+                firstTimes += (System.nanoTime() - started) / 1e6
+                val pauseStart = System.nanoTime()
+                val refined = if (first.size == 3 && first.last() !in request.phrases)
+                    engine.refineAfterPause(request, local, first) else null
+                if (refined != null) pauseTimes += (System.nanoTime() - pauseStart) / 1e6
+                val final = refined?.let { refineVisiblePredictions(first, it, request.phrases) } ?: first
+                val counts = results.getOrPut(source) { IntArray(5) }
+                counts[0]++
+                if (first.firstOrNull() == expected) counts[1]++
+                if (expected in first) counts[2]++
+                if (expected in final) counts[3]++
+                if (first != final) counts[4]++
+            }
+        }
+        check(pauseTimes.isNotEmpty()) { "The pause model did not return any predictions" }
+        val totals = IntArray(5) { index -> results.values.sumOf { it[index] } }
+        for ((source, counts) in results + ("total" to totals)) {
+            Log.i("NboardBenchmark", "$source cases=${counts[0]} first_top1=${counts[1]} " +
+                "first_top3=${counts[2]} paused_top3=${counts[3]} changed=${counts[4]}")
+        }
+        Log.i("NboardBenchmark", "first_p50=${percentile(firstTimes, .50)} first_p95=${percentile(firstTimes, .95)} " +
+            "pause_p50=${percentile(pauseTimes, .50)} pause_p95=${percentile(pauseTimes, .95)}")
+    }
 
     private fun percentile(values: List<Double>, p: Double) = values.sorted()[(values.size * p).toInt().coerceAtMost(values.size - 1)]
 

@@ -3,6 +3,10 @@ package com.nboard.ime
 import android.util.Log
 import androidx.core.view.isVisible
 import com.nboard.ime.prediction.LocalPredictionEngine
+import com.nboard.ime.prediction.PREDICTION_PAUSE_MS
+import com.nboard.ime.prediction.PredictionCandidate
+import com.nboard.ime.prediction.isPauseRefinementEligible
+import com.nboard.ime.prediction.refineVisiblePredictions
 import com.nboard.ime.prediction.PredictionRequest
 import com.nboard.ime.prediction.PredictionRanker
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +14,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.receiveAsFlow
 
 /** Wait this long for neural ranking before showing dictionary suggestions for a typed prefix. */
 private const val PREFIX_PUBLISH_DEADLINE_MS = 55L
@@ -18,9 +25,11 @@ internal data class PredictionWork(val revision: Long, val key: String, val befo
                                    val request: PredictionRequest, val fragment: String, val uppercase: Boolean)
 
 internal fun NboardImeService.startPredictionWorker() {
+    val pauseEnabled = BuildConfig.DEBUG && java.io.File(filesDir, LocalPredictionEngine.PAUSE_MODEL_PATH).isFile
     serviceScope.launch(Dispatchers.Default) {
         val engine = LocalPredictionEngine(applicationContext)
-        val neuralRequests = Channel<Pair<PredictionWork, List<com.nboard.ime.prediction.PredictionCandidate>>>(Channel.CONFLATED)
+        val neuralRequests = Channel<Pair<PredictionWork, List<PredictionCandidate>>>(Channel.CONFLATED)
+        val pauseRequests = Channel<Pair<PredictionWork, List<PredictionCandidate>>>(Channel.CONFLATED)
         try {
             kotlinx.coroutines.coroutineScope {
                 launch {
@@ -64,6 +73,7 @@ internal fun NboardImeService.startPredictionWorker() {
                                 pendingBoundaryPrediction = null
                                 publishPredictions(work, refined)
                             }
+                            if (pauseEnabled && isPauseRefinementEligible(work.request)) pauseRequests.trySend(work to local)
                             if (BuildConfig.DEBUG) Log.d("NboardPrediction", "neural_ms=${(System.nanoTime()-started)/1_000_000}")
                         } catch (e: Exception) {
                             if (!isActive) throw e
@@ -71,15 +81,50 @@ internal fun NboardImeService.startPredictionWorker() {
                         }
                     }
                 }
+                if (pauseEnabled) launch {
+                    pauseRequests.receiveAsFlow().collectLatest { (work, local) ->
+                        delay(PREDICTION_PAUSE_MS)
+                        if (work.revision != predictionRevision) return@collectLatest
+                        try {
+                            val started = System.nanoTime()
+                            val visible = withContext(Dispatchers.Main) {
+                                lastRankedPredictions.takeIf { canPublishPredictions(work) && it.size == 3 && it.last() !in work.request.phrases }
+                            } ?: return@collectLatest
+                            val refined = engine.refineAfterPause(work.request, local, visible) ?: return@collectLatest
+                            withContext(Dispatchers.Main) {
+                                if (!canPublishPredictions(work) || predictionRow.isTouchInProgress ||
+                                    spacebarCursor.isActive) return@withContext
+                                val ranked = refineVisiblePredictions(lastRankedPredictions, refined, work.request.phrases)
+                                if (ranked != lastRankedPredictions) {
+                                    publishRankedPredictions(work, ranked)
+                                    Log.d("NboardPrediction", "pause_ms=${(System.nanoTime()-started)/1_000_000} changed=1")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            Log.w("NboardPrediction", "Pause refinement failed", e)
+                        }
+                    }
+                }
             }
-        } finally { neuralRequests.close(); engine.close() }
+        } finally {
+            neuralRequests.close()
+            pauseRequests.close()
+            engine.close()
+        }
     }
 }
 
-private fun NboardImeService.publishPredictions(work: PredictionWork, candidates: List<com.nboard.ime.prediction.PredictionCandidate>) {
-    if (work.revision != predictionRevision || !shouldShowPredictionRow()) return
-    if (currentInputConnection?.getTextBeforeCursor(PREDICTION_CONTEXT_WINDOW, 0)?.toString() != work.before) return
-    val ranked = PredictionRanker.stableTop(candidates, lastRankedPredictions)
+private fun NboardImeService.canPublishPredictions(work: PredictionWork): Boolean =
+    work.revision == predictionRevision && shouldShowPredictionRow() &&
+        currentInputConnection?.getTextBeforeCursor(PREDICTION_CONTEXT_WINDOW, 0)?.toString() == work.before
+
+private fun NboardImeService.publishPredictions(work: PredictionWork, candidates: List<PredictionCandidate>) {
+    if (!canPublishPredictions(work)) return
+    publishRankedPredictions(work, PredictionRanker.stableTop(candidates, lastRankedPredictions))
+}
+
+private fun NboardImeService.publishRankedPredictions(work: PredictionWork, ranked: List<String>) {
     lastRankedPredictions = ranked
     // The user's own capitals ("Jaxon", "iPhone") and fixed English ones ("I'm") come first.
     val english = usesEnglishCasing()
