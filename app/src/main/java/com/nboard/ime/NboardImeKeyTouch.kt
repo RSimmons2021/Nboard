@@ -43,120 +43,7 @@ internal fun NboardImeService.bindPressAction(view: View, onTap: () -> Unit) {
 }
 
 internal fun NboardImeService.configureSpacebarTouch() {
-    var lastRawX = 0f
-    var downRawX = 0f
-    var downRawY = 0f
-    var accumulatedDx = 0f
-    var movedCursor = false
-    var cursorDragEnabled = false
-    var cursorModeActive = false
-    var baseAlpha = 1f
-    var committedEarly = false
-    val stepPx = dp(SPACEBAR_CURSOR_STEP_DP).toFloat()
-    val deadzonePx = dp(SPACEBAR_CURSOR_DEADZONE_DP).toFloat()
-
-    spaceButton.setOnTouchListener { touchedView, event ->
-        if (!touchedView.isEnabled) {
-            return@setOnTouchListener false
-        }
-
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                commitHeldKeys(except = touchedView)
-                committedEarly = false
-                cursorDragEnabled = !isAiPromptInputActive() && !isEmojiSearchInputActive() && !isClipboardOpen
-                cursorModeActive = false
-                lastRawX = event.rawX
-                downRawX = event.rawX
-                downRawY = event.rawY
-                accumulatedDx = 0f
-                movedCursor = false
-                baseAlpha = touchedView.alpha
-
-                touchedView.isPressed = true
-                touchedView.alpha = (baseAlpha * KEY_PRESSED_ALPHA).coerceAtLeast(MIN_PRESSED_ALPHA)
-                touchedView.animate().cancel()
-                touchedView.animate()
-                    .scaleX(KEY_PRESS_SCALE)
-                    .scaleY(KEY_PRESS_SCALE)
-                    .setDuration(KEY_PRESS_ANIM_MS)
-                    .start()
-                performKeyHaptic(touchedView)
-                // A letter pressed before the thumb leaves space still follows the space.
-                heldKeyCommits[touchedView] = {
-                    committedEarly = true
-                    if (!movedCursor && !cursorModeActive) handleSpaceTap()
-                }
-                true
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                if (cursorDragEnabled && !committedEarly) {
-                    if (!cursorModeActive) {
-                        val totalDx = event.rawX - downRawX
-                        val totalDy = event.rawY - downRawY
-                        if (kotlin.math.abs(totalDx) >= deadzonePx &&
-                            kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy)
-                        ) {
-                            cursorModeActive = true
-                            lastRawX = event.rawX
-                            accumulatedDx = 0f
-                        }
-                    } else {
-                        val dx = event.rawX - lastRawX
-                        lastRawX = event.rawX
-                        accumulatedDx += dx
-
-                        while (accumulatedDx >= stepPx) {
-                            moveCursorRight()
-                            accumulatedDx -= stepPx
-                            movedCursor = true
-                        }
-                        while (accumulatedDx <= -stepPx) {
-                            moveCursorLeft()
-                            accumulatedDx += stepPx
-                            movedCursor = true
-                        }
-                    }
-                }
-                true
-            }
-
-            MotionEvent.ACTION_UP -> {
-                touchedView.isPressed = false
-                touchedView.alpha = baseAlpha
-                touchedView.animate().cancel()
-                touchedView.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(KEY_RELEASE_ANIM_MS)
-                    .start()
-
-                heldKeyCommits.remove(touchedView)
-                if (!movedCursor && !committedEarly) {
-                    handleSpaceTap()
-                }
-                committedEarly = false
-                true
-            }
-
-            MotionEvent.ACTION_CANCEL -> {
-                heldKeyCommits.remove(touchedView)
-                committedEarly = false
-                touchedView.isPressed = false
-                touchedView.alpha = baseAlpha
-                touchedView.animate().cancel()
-                touchedView.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(KEY_RELEASE_ANIM_MS)
-                    .start()
-                true
-            }
-
-            else -> false
-        }
-    }
+    spacebarCursor.bind(spaceButton)
 }
 
 internal fun NboardImeService.handleSpaceTap() {
@@ -228,6 +115,7 @@ internal fun NboardImeService.configureKeyTouch(
     }
 
     view.setOnTouchListener { touchedView, event ->
+        if (spacebarCursor.isActive) return@setOnTouchListener true
         if (!touchedView.isEnabled) {
             return@setOnTouchListener false
         }

@@ -137,6 +137,7 @@ class NboardImeService : InputMethodService() {
     internal val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var keyboardUiContext: Context
     internal val keyPressPreview by lazy { KeyPressPreview(this) }
+    internal val spacebarCursor by lazy { SpacebarCursorController(this) }
     private var renderedKeyStructure: String? = null
     private val shiftLetterViews = mutableMapOf<TextView, String>()
     private var shiftKeyView: ImageButton? = null
@@ -339,6 +340,7 @@ class NboardImeService : InputMethodService() {
 
     override fun onDestroy() {
         if (debugInstance?.get() === this) debugInstance = null
+        spacebarCursor.cancel()
         keyPressPreview.dismiss()
         dismissActivePopup()
         stopAiProcessingAnimations()
@@ -357,6 +359,7 @@ class NboardImeService : InputMethodService() {
 
     override fun onCreateInputView(): View {
         return try {
+            spacebarCursor.cancel()
             keyPressPreview.dismiss()
             reloadTypingSettings()
             reloadBottomModesFromSettings()
@@ -395,6 +398,7 @@ class NboardImeService : InputMethodService() {
     }
 
     override fun onStartInput(editorInfo: EditorInfo?, restarting: Boolean) {
+        spacebarCursor.cancel()
         super.onStartInput(editorInfo, restarting)
         invalidatePredictions()
         aiFieldRevision++
@@ -458,6 +462,7 @@ class NboardImeService : InputMethodService() {
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
+        spacebarCursor.cancel()
         keyPressPreview.dismiss()
         heldKeyCommits.clear()
         super.onFinishInputView(finishingInput)
@@ -586,6 +591,10 @@ class NboardImeService : InputMethodService() {
         if (newSelStart != editorSelectionStart || newSelEnd != editorSelectionEnd) aiSelectionRevision++
         editorSelectionStart = newSelStart
         editorSelectionEnd = newSelEnd
+        if (spacebarCursor.isActive) {
+            spacebarCursor.onSelectionChanged(newSelStart, newSelEnd)
+            return
+        }
         updateAiPreviewUi()
         if (isAiPromptInputActive() || isEmojiSearchInputActive()) {
             clearInlinePromptFocus()
@@ -593,6 +602,11 @@ class NboardImeService : InputMethodService() {
         if (::row1.isInitialized) {
             refreshAutoShiftFromContextAndRerender()
         }
+    }
+
+    override fun onUpdateCursorAnchorInfo(cursorAnchorInfo: android.view.inputmethod.CursorAnchorInfo?) {
+        super.onUpdateCursorAnchorInfo(cursorAnchorInfo)
+        spacebarCursor.onAnchorInfo(cursorAnchorInfo)
     }
 
     internal fun reloadBottomModesFromSettings() {

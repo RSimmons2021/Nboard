@@ -20,7 +20,7 @@ class KeyboardTestActivity : AppCompatActivity() {
         }
         content.addView(TextView(this).apply { text = "Try your keyboard"; textSize = 26f })
         content.addView(TextView(this).apply {
-            text = "Type, backspace, and tap predictions to feel the motion. Hold Q–P for 1–0. Open the tools arrow for clipboard and settings."
+            text = "Type, backspace, and tap predictions to feel the motion. Hold Q–P for 1–0. Hold Space, then glide to move the cursor. Open the tools arrow for clipboard and settings."
             textSize = 15f
             setPadding(0, 20, 0, 20)
         })
