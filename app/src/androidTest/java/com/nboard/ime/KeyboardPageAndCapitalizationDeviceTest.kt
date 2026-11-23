@@ -117,6 +117,32 @@ class KeyboardPageAndCapitalizationDeviceTest {
         }
     }
 
+    @Test fun spaceCapitalizesPronounAndPeriodDistinguishesAddressFromProse() = withEditor(0) { service, editor ->
+        val language = service.keyboardLanguageMode
+        try {
+            main { service.keyboardLanguageMode = KeyboardLanguageMode.ENGLISH }
+            for ((typed, expected) in listOf("here i" to "here I ", "wiki" to "wiki ", "visit /i" to "visit /i ")) {
+                context(service, editor, typed)
+                tap(service.spaceButton)
+                await("Incorrect Space result for $typed") { editor.text.toString() == expected }
+            }
+            context(service, editor, "go to www")
+            main { service.commitKeyText(".") }
+            await("Address period must leave shift off") { editor.text.toString() == "go to www." && !service.isAutoShiftEnabled }
+            context(service, editor, "visit example")
+            main {
+                service.commitKeyText(".")
+                for (letter in "Dev/") service.commitKeyText(letter.toString())
+            }
+            await("A bare domain followed by a slash should rejoin") { editor.text.toString() == "visit example.dev/" }
+            context(service, editor, "go to www.example.com")
+            main { service.commitKeyText(".") }
+            await("Period after a complete website must end the sentence") {
+                editor.text.toString() == "go to www.example.com. " && service.isAutoShiftEnabled
+            }
+        } finally { main { service.keyboardLanguageMode = language } }
+    }
+
     @Test fun capitalizationWorksInRegularEditors() = checkCapitalization(0)
     @Test fun capitalizationWorksInWebFormEditors() = checkCapitalization(InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT)
     private fun checkCapitalization(variation: Int) = withEditor(variation) { service, editor ->

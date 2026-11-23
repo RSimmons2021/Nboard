@@ -234,12 +234,13 @@ internal fun NboardImeService.commitKeyText(text: String) {
     if (committedChar == null || !committedChar.isLetterOrDigit()) autoSpacedPeriod = false
     inputConnection.beginBatchEdit()
     try {
-        if (periodSpaceToCheck && committedChar != null && AUTOCORRECT_TRIGGER_DELIMITERS.contains(committedChar)) {
+        if (periodSpaceToCheck && committedChar != null && (committedChar in AUTOCORRECT_TRIGGER_DELIMITERS || committedChar == '/')) {
             joinDomainAfterAutoSpace(inputConnection)
         }
-        if (text.length == 1 && AUTOCORRECT_TRIGGER_DELIMITERS.contains(text[0])) {
+        if (committedChar in AUTOCORRECT_TRIGGER_DELIMITERS && committedChar != null &&
+            !(committedChar == '.' && isTypingAddress(beforeCursorText))) {
             android.os.Trace.beginSection("nboard.autocorrect")
-            try { autoCorrection = applyAutoCorrectionBeforeDelimiter(inputConnection) }
+            try { autoCorrection = applyAutoCorrectionBeforeDelimiter(inputConnection, text[0]) }
             finally { android.os.Trace.endSection() }
             autoCorrection?.let { committedSuffix = it.trailing + committedSuffix }
         }
@@ -297,12 +298,16 @@ internal fun NboardImeService.appendEmojiSearchText(text: String) {
     emojiSearchInput.setSelection(editable.length)
 }
 
-private val DOMAIN_AFTER_AUTO_SPACE = Regex("[\\p{L}\\d-]\\. (com|org|net|io|edu|gov)$", RegexOption.IGNORE_CASE)
+private val COMPLETE_DOMAIN_ENDINGS = setOf("com", "org", "net", "io", "edu", "gov", "dev", "app", "co", "uk", "ca", "fr", "de", "ai", "me", "info", "xyz")
+private val DOMAIN_AFTER_AUTO_SPACE = Regex("[\\p{L}\\d-]\\. ([A-Za-z]{2,4})$")
 
 /** The token before a period is part of an address, e.g. "me@mail" or "www.site". */
 internal fun isTypingAddress(beforeCursor: String): Boolean {
     val token = beforeCursor.takeLastWhile { !it.isWhitespace() }.lowercase(Locale.US)
-    return '@' in token || token.startsWith("www") || token.startsWith("http") || '/' in token
+    val host = token.substringAfterLast('@').substringAfter("://")
+    if (host.substringAfterLast('.', "") in COMPLETE_DOMAIN_ENDINGS) return false
+    return '@' in token || token == "www" || token.startsWith("www.") ||
+        token.startsWith("https://") || token.startsWith("http://") || '/' in token
 }
 
 /**
@@ -313,6 +318,8 @@ internal fun NboardImeService.joinDomainAfterAutoSpace(inputConnection: InputCon
     val before = inputConnection.getTextBeforeCursor(8, 0)?.toString() ?: return
     val match = DOMAIN_AFTER_AUTO_SPACE.find(before) ?: return
     val ending = match.groupValues[1]
+    val suffix = ending.lowercase(Locale.US)
+    if (suffix !in COMPLETE_DOMAIN_ENDINGS || suffix == "me" || suffix == "app") return
     inputConnection.deleteSurroundingText(ending.length + 1, 0)
     inputConnection.commitText(ending.lowercase(Locale.US), 1)
 }

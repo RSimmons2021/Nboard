@@ -39,6 +39,8 @@ class SmartTypingBehavior(private val inputType: Int, private val imeOptions: In
         if (context.isEmpty() || context.last() == '\n' || context.last() == '\r') return true
         val sentence = context.trimEnd { it in SENTENCE_CLOSERS }
         if (sentence.lastOrNull() !in SENTENCE_ENDING_PUNCTUATION) return false
+        if (sentence.endsWith('.') && context.length == beforeCursor.length &&
+            isTypingAddress(sentence.dropLast(1))) return false
         // An unfinished decimal isn't a sentence; whitespace after it is a boundary.
         if (sentence.last() == '.' && sentence.getOrNull(sentence.lastIndex - 1)?.isDigit() == true &&
             context.length == beforeCursor.length) return false

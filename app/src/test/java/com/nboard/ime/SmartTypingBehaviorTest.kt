@@ -10,11 +10,11 @@ class SmartTypingBehaviorTest {
     fun sentenceCapitalizationRecognizesParagraphsAndPunctuationAcrossEditors() {
         for (variation in listOf(InputType.TYPE_TEXT_VARIATION_NORMAL, InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT)) {
             val behavior = SmartTypingBehavior(InputType.TYPE_CLASS_TEXT or variation)
-            for (text in listOf("", "   ", "Hello. ", "Hello!", "Hello? ", "hello\n", "hello\n  ",
+            for (text in listOf("", "   ", "Hello. ", "Visit www.example.com. ", "Hello!", "Hello? ", "hello\n", "hello\n  ",
                 "hello\r\n", "hello\r", "Meet at 5. ", "Wait... ", "\"Hello.\" ")) {
                 assertTrue("Must capitalize after '$text' in variation $variation", behavior.shouldAutoCapitalizeAtCursor(text))
             }
-            for (text in listOf("hello", "hello ", "hello, ", "3.", "3.14", "hello\nworld ")) {
+            for (text in listOf("hello", "hello ", "hello, ", "3.", "3.14", "go to www.", "go to https://docs.", "mail me@host.", "hello\nworld ")) {
                 assertFalse("Must stay lowercase after '$text' in variation $variation", behavior.shouldAutoCapitalizeAtCursor(text))
             }
         }

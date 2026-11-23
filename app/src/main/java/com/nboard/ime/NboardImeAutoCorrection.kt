@@ -170,11 +170,22 @@ internal fun NboardImeService.buildLexicon(words: Collection<String>): Lexicon {
     )
 }
 
-internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection: InputConnection): AutoCorrectionResult? {
-    if (keyboardLanguageMode == KeyboardLanguageMode.DISABLED) {
-        return null
-    }
+internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection: InputConnection, delimiter: Char): AutoCorrectionResult? {
+    val capitalizePronoun = delimiter == ' ' && autoCapitalizeAfterPunctuationEnabled &&
+        smartTypingBehavior.shouldAutoSpaceAndCapitalize() &&
+        (usesEnglishCasing() || keyboardLanguageMode == KeyboardLanguageMode.DISABLED &&
+            resources.configuration.locales[0].language == "en")
+    if (!capitalizePronoun && keyboardLanguageMode == KeyboardLanguageMode.DISABLED) return null
     val beforeCursor = inputConnection.getTextBeforeCursor(AUTOCORRECT_CONTEXT_WINDOW, 0)?.toString().orEmpty()
+    if (capitalizePronoun && beforeCursor.endsWith("i") &&
+        (beforeCursor.length == 1 || beforeCursor[beforeCursor.lastIndex - 1].let { it.isWhitespace() || it in "([“\"" }) &&
+        inputConnection.getSelectedText(0).isNullOrEmpty()) {
+        val after = inputConnection.getTextAfterCursor(1, 0)?.firstOrNull()
+        if (after == null || after.isWhitespace() || after in ",;!?)]”\"") {
+            return replaceCorrectedWord(inputConnection, "i", "I", "")
+        }
+    }
+    if (keyboardLanguageMode == KeyboardLanguageMode.DISABLED) return null
     val sourceWord = extractTrailingWord(beforeCursor) ?: return null
     // The word may end before closing punctuation, e.g. "(teh)". Those characters are
     // re-committed after the correction; any other trailing text leaves the word alone.
@@ -189,6 +200,7 @@ internal fun NboardImeService.applyAutoCorrectionBeforeDelimiter(inputConnection
     if (beforeCursor.getOrNull(wordStart - 1) in ADDRESS_SEPARATORS) {
         return null
     }
+    if (sourceWord == "i" && delimiter == ' ') return null
     // A capital typed mid-sentence marks a name ("see Jaxon"); leave it as typed.
     val beforeWord = beforeCursor.substring(0, wordStart).trimEnd()
     val sentenceStart = beforeWord.isEmpty() || beforeWord.last() in SMART_TYPING_SENTENCE_ENDERS || beforeWord.last() == '\n'
