@@ -10,7 +10,9 @@ import java.util.Locale
 internal class LocalPredictionEngine(private val context: Context) : AutoCloseable {
     private data class Dictionary(val frequencies: Map<String, Long>, val folded: Map<String, String>, val byFirst: Map<Char, List<String>>,
                                   val sortedWords: List<String>,
-                                  val bigrams: Map<String, Map<String, Long>>)
+                                  val bigrams: Map<String, Map<String, Long>>,
+                                  /** "first second" -> next word -> ln P(next | both); conversational, English only. */
+                                  val chatTrigrams: Map<String, Map<String, Double>> = emptyMap())
     private var english: Dictionary? = null
     private var french: Dictionary? = null
     private var neural: NeuralPredictor? = null
@@ -30,9 +32,16 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
             lines.forEach { line -> val p = line.trim().split(' '); if (p.size == 3)
                 bigrams.getOrPut(p[0]) { mutableMapOf() }[p[1]] = p[2].toLongOrNull() ?: 1 }
         }
+        val chatTrigrams = mutableMapOf<String, MutableMap<String, Double>>()
+        if (language == "english") try {
+            context.assets.open(CHAT_TRIGRAMS_PATH).bufferedReader().useLines { lines ->
+                lines.forEach { line -> val p = line.split(' '); if (p.size == 4 && !line.startsWith('#'))
+                    chatTrigrams.getOrPut("${p[0]} ${p[1]}") { mutableMapOf() }[p[2]] = p[3].toDoubleOrNull() ?: return@forEach }
+            }
+        } catch (e: java.io.IOException) { Log.w("NboardPrediction", "No chat trigram table", e) }
         val folded = words.keys.associateWith { PredictionRanker.fold(it) }
         return Dictionary(words, folded, words.keys.groupBy { folded[it]?.firstOrNull() ?: ' ' },
-            words.keys.sortedBy { folded[it] }, bigrams).also {
+            words.keys.sortedBy { folded[it] }, bigrams, chatTrigrams).also {
             if (language == "english") english = it else french = it
         }
     }
@@ -47,8 +56,9 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
         for (language in languages) {
             val dict = dictionary(language)
             val contextual = dict.bigrams[previous].orEmpty()
+            val chat = chatContinuations(dict, signals)
             val source = when {
-                prefix.isBlank() -> dict.frequencies.keys.take(150) + contextual.keys
+                prefix.isBlank() -> dict.frequencies.keys.take(150) + contextual.keys + chat?.keys.orEmpty()
                 prefix.length < 3 -> dict.byFirst[prefix.first()].orEmpty().filter { dict.folded[it]!!.startsWith(prefix) }.take(256)
                 else -> prefixCandidates(dict, prefix)
             }
@@ -62,6 +72,7 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
                 if (PredictionRanker.prefixDistance(prefix, dict.folded[word] ?: PredictionRanker.fold(word)) > 1) continue
                 val c = PredictionRanker.score(word, dict.frequencies[word] ?: 1L, contextual[word] ?: 0L,
                     request, rankingSignals, dict.folded[word] ?: PredictionRanker.fold(word))
+                    .let { it.copy(score = it.score + chatBonus(chat, word, prefix.isBlank())) }
                 if (c.score > (result[word]?.score ?: Double.NEGATIVE_INFINITY)) result[word] = c
             }
         }
@@ -146,6 +157,7 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
             val candidate = all[word] ?: PredictionRanker.score(word, dict.frequencies[word] ?: 1,
                 dict.bigrams[signals.previous]?.get(word) ?: 0, request, signals,
                 dict.folded[word] ?: PredictionRanker.fold(word))
+                .let { it.copy(score = it.score + chatBonus(chatContinuations(dict, signals), word, request.prefix.isBlank())) }
             // All candidates retain the same dictionary/personalization score; neural likelihood adds context.
             // A small model assigns very low likelihood to unfamiliar names.
             // Repeated user vocabulary supplies evidence the model never trained on.
@@ -157,6 +169,29 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
         return all.values.map {
             if (it.word in scores) it else it.copy(score = it.score - it.dictionaryPrior * weights.priorDrop + floor * weights.likelihood)
         }
+    }
+
+    private fun chatContinuations(dict: Dictionary, signals: PredictionSignals): Map<String, Double>? =
+        if (signals.previousTwo.isEmpty()) null else dict.chatTrigrams["${signals.previousTwo} ${signals.previous}"]
+
+    /**
+     * Two-word conversational context ("would you" -> "like"). Only applies when the context is in
+     * the table; a word it never saw there gets the floor. Weights fitted on the dev split.
+     */
+    private fun chatBonus(chat: Map<String, Double>?, word: String, nextWord: Boolean): Double {
+        chat ?: return 0.0
+        val (weight, floor) = if (nextWord) CHAT_NEXT_WORD else CHAT_COMPLETION
+        return weight * (chat[word] ?: floor)
+    }
+
+    /**
+     * The next word that follows the last two words at least half the time in conversation
+     * ("would you" -> "like", 92%), for the strip's last slot; see PredictionRanker.stableTop.
+     */
+    fun dominantChatContinuation(request: PredictionRequest): String? {
+        if (request.prefix.isNotBlank() || request.language == "FRENCH") return null
+        val chat = chatContinuations(dictionary("english"), PredictionRanker.signals(request)) ?: return null
+        return chat.maxByOrNull { it.value }?.takeIf { it.value >= CHAT_DOMINANT_LOG_PROBABILITY }?.key
     }
 
     /** Binary prefix lookup avoids scanning thousands of words for every typo. */
@@ -224,6 +259,11 @@ internal class LocalPredictionEngine(private val context: Context) : AutoCloseab
             "hvad", "skal", "vil", "kan", "hun", "mig", "sig", "hende", "jer", "dem", "nu", "du", "ud", "fra",
             "hvor", "godt", "hej", "tak", "nej", "ja", "være", "blive", "også", "meget", "noget", "ingen")
         const val PAUSE_MODEL_PATH = "models/pause.gguf"
+        const val CHAT_TRIGRAMS_PATH = "dictionaries/english_chat_trigrams.txt"
+        // (weight, floor) for chat triples; tools/nextword-eval/build_chat_trigrams.py, fitted on the dev split.
+        internal val CHAT_NEXT_WORD = .1 to -8.0
+        internal val CHAT_COMPLETION = .6 to -10.0
+        private val CHAT_DOMINANT_LOG_PROBABILITY = kotlin.math.ln(.5)
         const val MODEL_SHA = "47b3a97a80ab96df2c7148b8bb155f471d0fe74bffed392c0c4ea220d36ea5f8"
         // Fitted per model on held-out conversational text (tools/nextword-eval/fit_blend.py, dev split).
         internal val KEYBOARD_MODEL_NEXT_WORD = BlendWeights(priorDrop = 1.0, likelihood = .5)

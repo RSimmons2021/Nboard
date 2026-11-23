@@ -126,7 +126,8 @@ class ConversationalPredictionDeviceTest {
                 if (request.phrases.isNotEmpty()) phraseOffered++
                 if (expected in request.phrases) phraseHasAnswer++
                 var started = System.nanoTime()
-                val ranked = PredictionRanker.stableTop(engine.refine(request, engine.candidates(request)), emptyList())
+                val ranked = PredictionRanker.stableTop(engine.refine(request, engine.candidates(request)), emptyList(),
+                    phrases = request.phrases, dominant = engine.dominantChatContinuation(request))
                 if (index > 0) boundary += (System.nanoTime() - started) / 1e6
                 ranked.firstOrNull()?.let { firsts.merge(it, 1, Int::plus) }
                 bySource.getOrPut(cases[index].getOrElse(2) { "all" }) { IntArray(3) }.let {

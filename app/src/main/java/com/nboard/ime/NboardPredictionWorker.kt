@@ -22,7 +22,10 @@ import kotlinx.coroutines.flow.receiveAsFlow
 private const val PREFIX_PUBLISH_DEADLINE_MS = 55L
 
 internal data class PredictionWork(val revision: Long, val key: String, val before: String,
-                                   val request: PredictionRequest, val fragment: String, val uppercase: Boolean)
+                                   val request: PredictionRequest, val fragment: String, val uppercase: Boolean) {
+    /** Set by the dictionary worker: a chat continuation that keeps the last slot (stableTop). */
+    @Volatile var dominant: String? = null
+}
 
 internal fun NboardImeService.startPredictionWorker() {
     val pauseEnabled = BuildConfig.DEBUG && java.io.File(filesDir, LocalPredictionEngine.PAUSE_MODEL_PATH).isFile
@@ -38,6 +41,7 @@ internal fun NboardImeService.startPredictionWorker() {
                         try {
                             val started = System.nanoTime()
                             val local = engine.candidates(work.request)
+                            work.dominant = engine.dominantChatContinuation(work.request)
                             withContext(Dispatchers.Main) {
                                 if (work.revision != predictionRevision) return@withContext
                                 // Merge the fast dictionary and neural updates into one row
@@ -121,7 +125,8 @@ private fun NboardImeService.canPublishPredictions(work: PredictionWork): Boolea
 
 private fun NboardImeService.publishPredictions(work: PredictionWork, candidates: List<PredictionCandidate>) {
     if (!canPublishPredictions(work)) return
-    publishRankedPredictions(work, PredictionRanker.stableTop(candidates, lastRankedPredictions, phrases = work.request.phrases))
+    publishRankedPredictions(work, PredictionRanker.stableTop(candidates, lastRankedPredictions,
+        phrases = work.request.phrases, dominant = work.dominant))
 }
 
 private fun NboardImeService.publishRankedPredictions(work: PredictionWork, ranked: List<String>) {

@@ -178,3 +178,25 @@ had the word, it was a very common conversational continuation ("would you" -> "
 of frequent conversational pairs is the next ranking experiment; tune it on the dev set
 with `fit_blend.py`, not on these cases. The sample is small and both keyboards kept
 their own history.
+
+### Conversational word triples (2026-11-23)
+
+`build_chat_trigrams.py` counts word triples in Google's Taskmaster-1/2 dialogues
+(CC BY 4.0, 645k utterances; separate from the SMS/DailyDialog cases) into
+`english_chat_trigrams.txt` (59k triples). The ranking adds `weight * ln P(next | last two
+words)` when the context is in the table (0.1 before the first letter, 0.6 after one), and a
+continuation seen at least half the time ("would you" -> "like", 92%) keeps the strip's last
+slot unless a recalled phrase holds it. Weights were fitted on the dev split from
+`PredictionBlendDumpDeviceTest`; the word-pair counts alone gave no gain there.
+
+Held-out test, Nothing A024, 1,200 cases, no history:
+
+| | Top-1 | Top-3 | Top-3 after 1 letter | Boundary p50/p95 |
+|---|---|---|---|---|
+| Before | 18.6% | 29.0% | 59.1% | 24 / 43 ms |
+| With chat triples | 18.3% | 29.5% | 59.4% | 23 / 40 ms |
+
+Dialog cases gained most (top-3 35.1% to 36.2%). The examples Gboard won earlier now appear:
+"would you" -> like, "call me back when she" -> gets, "soon you will" -> have,
+"thank you so" -> much. "have you ever" -> had and "thank you" -> so still do not. Taskmaster is
+mostly booking conversations, so the table is weakest outside that kind of talk.

@@ -107,9 +107,12 @@ internal object PredictionRanker {
      * the last slot when the score blend left it out. Gboard behaves this way: on a Nothing A024
      * it recalled a practised word from only the last two words ("behind the" -> "woodstove") in
      * 5/6 fresh phrases after three uses, where Nboard's blend let general words outrank it (1/6).
+     *
+     * Otherwise a [dominant] conversational continuation ("would you" -> "like") takes that slot:
+     * the small model under-rates such common chat pairs, which Gboard always offers.
      */
     fun stableTop(candidates: List<PredictionCandidate>, previous: List<String>, limit: Int = 3,
-                  phrases: Map<String, Double> = emptyMap()): List<String> {
+                  phrases: Map<String, Double> = emptyMap(), dominant: String? = null): List<String> {
         val remaining = candidates.distinctBy { it.word }.sortedByDescending { it.score }.toMutableList()
         val result = mutableListOf<String>()
         while (remaining.isNotEmpty() && result.size < limit) {
@@ -122,6 +125,7 @@ internal object PredictionRanker {
         if (result.size == limit && result.none { it in phrases }) {
             val recalled = remaining.filter { !it.correction && it.word in phrases }.maxByOrNull { phrases.getValue(it.word) }
             if (recalled != null) result[limit - 1] = recalled.word
+            else if (dominant != null && dominant !in result) result[limit - 1] = dominant
         }
         return result
     }

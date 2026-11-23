@@ -63,4 +63,12 @@ class PredictionRankerTest {
             PredictionRanker.stableTop(candidates, emptyList(), phrases = mapOf("world" to 4.0, "woodstove" to 3.0)))
         assertEquals(listOf("first", "world", "front"), PredictionRanker.stableTop(candidates, emptyList()))
     }
+
+    @Test fun dominantChatContinuationTakesTheLastSlotUnlessAPhraseHoldsIt() {
+        val candidates = listOf(PredictionCandidate("have", 9.0), PredictionCandidate("recommend", 8.0), PredictionCandidate("know", 7.0))
+        assertEquals(listOf("have", "recommend", "like"), PredictionRanker.stableTop(candidates, emptyList(), dominant = "like"))
+        assertEquals(listOf("have", "recommend", "know"),
+            PredictionRanker.stableTop(candidates, emptyList(), phrases = mapOf("know" to 3.0), dominant = "like"))
+        assertEquals(listOf("have", "recommend", "know"), PredictionRanker.stableTop(candidates, emptyList(), dominant = "have"))
+    }
 }
