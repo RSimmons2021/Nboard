@@ -61,6 +61,9 @@ class PredictionStripView @JvmOverloads constructor(context: Context, attrs: Att
     var foreground by mutableStateOf(Color.White)
     var useRoboto by mutableStateOf(false)
     var onAccept: (String) -> Unit = {}
+    /** Emoji for the current word; when present they take the right slot, as in Gboard. */
+    var emojis by mutableStateOf<List<String>>(emptyList())
+    var onEmoji: (String) -> Unit = {}
     internal var isTouchInProgress = false
         private set
 
@@ -73,7 +76,8 @@ class PredictionStripView @JvmOverloads constructor(context: Context, attrs: Att
     }
 
     @Composable override fun Content() {
-        PredictionStrip(words, motion.animates, foreground, useRoboto, acceptSuggestions, typed, motion, onAccept)
+        PredictionStrip(words, motion.animates, foreground, useRoboto, acceptSuggestions, typed, motion,
+            emojis = emojis, onEmoji = { onEmoji(it) }, onAccept = onAccept)
     }
 }
 
@@ -87,7 +91,8 @@ internal fun predictionSlots(words: List<String>): List<String> = when (words.si
 @Composable
 internal fun PredictionStrip(words: List<String>, animate: Boolean, foreground: Color, useRoboto: Boolean,
                              accepting: Boolean = true, typed: String = "",
-                             motion: PredictionMotionLevel = PredictionMotionLevel.STANDARD, onAccept: (String) -> Unit) {
+                             motion: PredictionMotionLevel = PredictionMotionLevel.STANDARD,
+                             emojis: List<String> = emptyList(), onEmoji: (String) -> Unit = {}, onAccept: (String) -> Unit) {
     val slots = predictionSlots(words)
     // Slot identity stays fixed: ranking updates reshape letters locally, never
     // carry an entire word across a divider. The full 48 dp row remains tappable.
@@ -95,20 +100,50 @@ internal fun PredictionStrip(words: List<String>, animate: Boolean, foreground: 
         slots.forEachIndexed { index, word -> key(index) {
             if (index > 0) Box(Modifier.width(1.dp).fillMaxHeight(0.42f)
                 .background(foreground.copy(alpha = 0.14f)))
+            if (index == slots.lastIndex && emojis.isNotEmpty()) {
+                EmojiSlot(emojis, foreground, animate, Modifier.weight(1f), onEmoji)
+            } else {
+                WordSlot(word, animate, foreground, useRoboto, accepting, typed, motion, Modifier.weight(1f), onAccept)
+            }
+        } }
+    }
+}
+
+@Composable
+private fun WordSlot(word: String, animate: Boolean, foreground: Color, useRoboto: Boolean, accepting: Boolean,
+                     typed: String, motion: PredictionMotionLevel, modifier: Modifier, onAccept: (String) -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val tint by animateColorAsState(
+        foreground.copy(alpha = if (pressed && word.isNotBlank()) 0.08f else 0f),
+        if (animate) tween(110) else snap(), label = "suggestion-highlight")
+    BoxWithConstraints(modifier.fillMaxHeight().clipToBounds()
+        .semantics { contentDescription = if (word.isBlank()) "" else if (accepting) "Insert suggestion $word" else "Updating suggestion $word" }
+        // Taps while updating go to onAccept, which keeps words that still fit the typed text.
+        .clickable(interactionSource = interaction, indication = null,
+            enabled = word.isNotBlank(), role = Role.Button) { onAccept(word) }) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 5.dp, vertical = 7.dp)
+            .background(tint, RoundedCornerShape(6.dp)))
+        val slotWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+        MorphingWord(word, animate, foreground, useRoboto, slotWidthPx, typed, motion)
+    }
+}
+
+/** One or two emoji sharing the right slot, each its own button. */
+@Composable
+private fun EmojiSlot(emojis: List<String>, foreground: Color, animate: Boolean, modifier: Modifier, onEmoji: (String) -> Unit) {
+    Row(modifier.fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
+        emojis.forEach { emoji -> key(emoji) {
             val interaction = remember { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
-            val tint by animateColorAsState(
-                foreground.copy(alpha = if (pressed && word.isNotBlank()) 0.08f else 0f),
-                if (animate) tween(110) else snap(), label = "suggestion-highlight")
-            BoxWithConstraints(Modifier.weight(1f).fillMaxHeight().clipToBounds()
-                .semantics { contentDescription = if (word.isBlank()) "" else if (accepting) "Insert suggestion $word" else "Updating suggestion $word" }
-                // Taps while updating go to onAccept, which keeps words that still fit the typed text.
-                .clickable(interactionSource = interaction, indication = null,
-                    enabled = word.isNotBlank(), role = Role.Button) { onAccept(word) }) {
-                Box(Modifier.fillMaxSize().padding(horizontal = 5.dp, vertical = 7.dp)
-                    .background(tint, RoundedCornerShape(6.dp)))
-                val slotWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
-                MorphingWord(word, animate, foreground, useRoboto, slotWidthPx, typed, motion)
+            val tint by animateColorAsState(foreground.copy(alpha = if (pressed) 0.08f else 0f),
+                if (animate) tween(110) else snap(), label = "emoji-highlight")
+            Box(Modifier.weight(1f).fillMaxHeight()
+                .semantics { contentDescription = "Insert emoji $emoji" }
+                .clickable(interactionSource = interaction, indication = null, role = Role.Button) { onEmoji(emoji) },
+                contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 7.dp).background(tint, RoundedCornerShape(6.dp)))
+                androidx.compose.foundation.text.BasicText(emoji, style = androidx.compose.ui.text.TextStyle(fontSize = 20.sp))
             }
         } }
     }

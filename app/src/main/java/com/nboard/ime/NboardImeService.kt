@@ -251,6 +251,9 @@ class NboardImeService : InputMethodService() {
     @Volatile
     internal var frenchLexicon = Lexicon.empty()
     internal lateinit var autoCorrectEngine: AutoCorrect
+    /** Word -> emoji for the strip; loaded in the background, empty until then. */
+    @Volatile
+    internal var emojiKeywords = EmojiKeywords.EMPTY
     /** Second opinion from the phone's spell checker (usually Gboard's); see combineWithSystemSpellCheck. */
     internal val systemSpellCheck by lazy { SystemSpellCheck(applicationContext) }
 
@@ -313,6 +316,7 @@ class NboardImeService : InputMethodService() {
         serviceScope.launch(Dispatchers.Default) {
             autoCorrectEngine.preload()
         }
+        serviceScope.launch(Dispatchers.IO) { emojiKeywords = EmojiKeywords.load(applicationContext) }
 
         reloadBottomModesFromSettings()
 
@@ -475,7 +479,7 @@ class NboardImeService : InputMethodService() {
         aiUndo = null
         aiGenerationJob?.cancel()
         savePredictionLearning(flushPhrases = true)
-        if (::predictionRow.isInitialized) predictionRow.words = emptyList()
+        if (::predictionRow.isInitialized) { predictionRow.words = emptyList(); predictionRow.emojis = emptyList() }
         composeOwner?.hide()
         dismissActivePopup()
         stopAiProcessingAnimations()
@@ -1058,6 +1062,12 @@ class NboardImeService : InputMethodService() {
             }
         }
 
+        predictionRow.onEmoji = { emoji ->
+            if (predictionRow.acceptSuggestions) {
+                performKeyHaptic(predictionRow)
+                commitEmojiPrediction(emoji)
+            }
+        }
         predictionRow.onAccept = { word ->
             // While the row is being refreshed, a visible word still counts if it completes
             // what is typed now; a stale word from the previous context does not.

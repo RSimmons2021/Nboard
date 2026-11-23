@@ -205,9 +205,32 @@ class GboardComparisonDeviceTest {
         }
     }
 
+    /** Types each line of `probe-prompts.txt` (letters, spaces) and records the strip: `-e keyboard gboard|nboard`. */
+    @Test fun probePrompts() {
+        val keyboard = arguments.getString("probe") ?: return assumeTrue(false)
+        val folder = requireNotNull(instrumentation.targetContext.getExternalFilesDir(null))
+        val prompts = File(folder, "probe-prompts.txt").readLines().filter { it.isNotBlank() }
+        val out = File(folder, "probe-$keyboard.tsv")
+        fun run(clear: () -> Unit, typeKeys: (String) -> Unit, row: () -> List<String>) = out.printWriter().use { writer ->
+            for (prompt in prompts) {
+                clear(); typeKeys(prompt); SystemClock.sleep(SETTLE_MS)
+                writer.println(prompt + "\t" + row().joinToString("|")); writer.flush()
+            }
+        }
+        when (keyboard) {
+            "gboard" -> withGboard { editor -> val keys = keyCenters(); run({ setText(editor, "") }, { typeText(it, keys) }, ::suggestions) }
+            "nboard" -> withNboard { service, editor, typeKeys ->
+                run({ setText(editor, ""); val until = SystemClock.uptimeMillis() + 5_000
+                    while (service.editorSelectionStart != 0 && SystemClock.uptimeMillis() < until) SystemClock.sleep(20) }, typeKeys) { visibleRow(service) }
+            }
+        }
+    }
+
     private fun visibleRow(service: NboardImeService): List<String> {
         var shown = emptyList<String>()
-        instrumentation.runOnMainSync { shown = service.predictionRow.words.map { it.lowercase() } }
+        instrumentation.runOnMainSync {
+            shown = service.predictionRow.words.map { it.lowercase() } + service.predictionRow.emojis.map { "$it emoji" }
+        }
         return shown
     }
 

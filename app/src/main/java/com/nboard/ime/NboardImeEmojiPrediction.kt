@@ -294,9 +294,33 @@ internal fun NboardImeService.predictionRenderContextKey(beforeCursor: String): 
     }
 }
 
-internal fun NboardImeService.setPredictionWords(words: List<String>) {
+internal fun NboardImeService.setPredictionWords(words: List<String>, emojis: List<String> = emptyList()) {
     predictionRow.words = words.toList()
-    hasPredictionSuggestions = words.any { it.isNotBlank() }
+    predictionRow.emojis = emojis
+    hasPredictionSuggestions = words.any { it.isNotBlank() } || emojis.isNotEmpty()
+}
+
+/**
+ * Emoji for the word at the cursor, shown in the strip's right slot. A recalled phrase word keeps
+ * that slot instead: the user has typed it in this context before, which is stronger evidence.
+ */
+internal fun NboardImeService.emojiPredictions(beforeCursor: String, ranked: List<String>, phrases: Map<String, Double>): List<String> {
+    if (keyboardLanguageMode != KeyboardLanguageMode.ENGLISH && keyboardLanguageMode != KeyboardLanguageMode.BOTH) return emptyList()
+    if (ranked.size == 3 && ranked[2] in phrases) return emptyList()
+    val usage = emojiUsageCounts.entries.groupingBy { EmojiTones.base(it.key) }.fold(0) { total, entry -> total + entry.value }
+    return emojiKeywords.suggest(beforeCursor, usage).map(::preferredEmojiTone)
+}
+
+/** Inserts a strip emoji after the typed word, as if Space ended the word first ("pizza" -> "pizza 🍕 "). */
+internal fun NboardImeService.commitEmojiPrediction(emoji: String) {
+    val inputConnection = currentInputConnection ?: return
+    val previous = inputConnection.getTextBeforeCursor(1, 0)?.toString().orEmpty()
+    // Space runs autocorrection and learning for the word, exactly like typing it.
+    if (previous.isNotEmpty() && !previous.last().isWhitespace()) commitKeyText(" ")
+    inputConnection.commitText("$emoji ", 1)
+    recordEmojiUsage(emoji)
+    pendingAutoCorrection = null
+    refreshAutoShiftFromContextAndRerender()
 }
 
 internal fun NboardImeService.shouldShowPredictionRow(): Boolean {

@@ -130,12 +130,12 @@ private fun NboardImeService.publishRankedPredictions(work: PredictionWork, rank
     val english = usesEnglishCasing()
     val words = ranked.map { word -> wordCasing.display(word, work.fragment, work.uppercase && work.fragment.isBlank(), english) }
         .ifEmpty { if (work.fragment.isNotBlank()) listOf(work.fragment) else emptyList() }
-    setPredictionWords(words)
+    setPredictionWords(words, emojiPredictions(work.before, ranked, work.request.phrases))
     predictionRow.typed = work.fragment
     predictionRow.acceptSuggestions = true
     predictionRenderCache = PredictionRenderCache(work.key, words)
-    predictionRow.isVisible = words.isNotEmpty()
-    toolbarActionsRow.isVisible = words.isEmpty()
+    predictionRow.isVisible = words.isNotEmpty() || predictionRow.emojis.isNotEmpty()
+    toolbarActionsRow.isVisible = !predictionRow.isVisible
 }
 
 internal fun NboardImeService.invalidatePredictions() {
