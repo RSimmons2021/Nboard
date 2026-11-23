@@ -162,6 +162,8 @@ class NboardImeService : InputMethodService() {
 
     internal lateinit var clipboardPanel: LinearLayout
     internal lateinit var clipboardItemsContainer: LinearLayout
+    /** The clip opened to show all of its text in the clipboard panel, if any. */
+    internal var expandedClipText: String? = null
 
     internal lateinit var emojiPanel: LinearLayout
     internal lateinit var emojiSearchPill: LinearLayout

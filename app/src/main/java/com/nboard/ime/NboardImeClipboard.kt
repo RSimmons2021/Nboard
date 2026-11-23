@@ -112,23 +112,37 @@ internal fun NboardImeService.renderClipboardItems() {
             setPadding(dp(4), dp(12), dp(4), dp(8))
             applyInterTypeface(this)
         })
-        val rows = entries.chunked(2)
+        // Two clips per row; an expanded clip takes a row of its own at full width.
+        val rows = mutableListOf<List<com.nboard.ime.clipboard.ClipboardItem>>()
+        var pending = mutableListOf<com.nboard.ime.clipboard.ClipboardItem>()
+        for (item in entries) {
+            if (item.text == expandedClipText) {
+                if (pending.isNotEmpty()) rows += pending
+                rows += listOf(item)
+                pending = mutableListOf()
+            } else {
+                pending += item
+                if (pending.size == 2) { rows += pending; pending = mutableListOf() }
+            }
+        }
+        if (pending.isNotEmpty()) rows += pending
         rows.forEachIndexed { rowIndex, rowItems ->
             val row = buildClipboardRow()
+            val expanded = expandedClipText != null && rowItems.singleOrNull()?.text == expandedClipText
             rowItems.forEach { item ->
                 val text = item.text
-                val button = buildClipboardButton(text, pinned = item.pinned, enabled = true) {
+                row.addView(buildClipboardCard(text, pinned = item.pinned, expanded = expanded) {
                     if (isAiMode) {
                         appendPromptText(text)
                     } else {
                         currentInputConnection?.commitText(text, 1)
                     }
                     isClipboardOpen = false
+                    expandedClipText = null
                     refreshUi()
-                }
-                row.addView(button)
+                })
             }
-            if (rowItems.size == 1) {
+            if (rowItems.size == 1 && !expanded) {
                 row.addView(buildClipboardSpacer())
             }
             if (rowIndex < rows.lastIndex) {
@@ -137,6 +151,7 @@ internal fun NboardImeService.renderClipboardItems() {
             clipboardItemsContainer.addView(row)
         }
     }
+    if (items.none { it.text == expandedClipText }) expandedClipText = null
     addSection("Pinned", items.filter { it.pinned })
     addSection("Saved · up to 50 clips, no expiry", items.filterNot { it.pinned })
 }
@@ -197,6 +212,61 @@ internal fun NboardImeService.buildClipboardButton(
         }
     }
 }
+
+/**
+ * A clip card. Collapsed cards share a row and show three lines; a clip that does not fit gets an
+ * expand button, which opens it across the full width with all of its text (and closes it again).
+ */
+internal fun NboardImeService.buildClipboardCard(text: String, pinned: Boolean, expanded: Boolean, onPaste: () -> Unit): View {
+    val button = buildClipboardButton(text, pinned, enabled = true, onClick = onPaste).apply {
+        maxLines = if (expanded) CLIPBOARD_EXPANDED_MAX_LINES else CLIPBOARD_COLLAPSED_LINES
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        layoutParams = android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            if (expanded) ViewGroup.LayoutParams.WRAP_CONTENT else dp(72)
+        )
+        if (expanded) minHeight = dp(72)
+        // Room for the expand button in the bottom corner.
+        setPaddingRelative(paddingStart, paddingTop, dp(36), paddingBottom)
+    }
+    val toggle = androidx.appcompat.widget.AppCompatImageButton(this).apply {
+        background = null
+        setIcon(this, if (expanded) R.drawable.ic_chevron_up_lucide else R.drawable.ic_chevron_down_lucide, R.color.key_text)
+        contentDescription = if (expanded) "Collapse clip" else "Show the whole clip"
+        flattenView(this)
+        // Shown only when the text is cut off, or to collapse an open clip.
+        visibility = if (expanded) View.VISIBLE else View.INVISIBLE
+        setOnClickListener {
+            val scroll = clipboardItemsContainer.parent as? android.widget.ScrollView
+            android.transition.TransitionManager.beginDelayedTransition(scroll ?: clipboardItemsContainer,
+                android.transition.AutoTransition().setDuration(180))
+            expandedClipText = if (expanded) null else text
+            renderClipboardItems()
+            if (!expanded && scroll != null) scroll.post {
+                val card = (0 until clipboardItemsContainer.childCount).map { clipboardItemsContainer.getChildAt(it) }
+                    .firstOrNull { row -> (row as? ViewGroup)?.getChildAt(0)?.tag == text }
+                if (card != null && (card.top < scroll.scrollY || card.bottom > scroll.scrollY + scroll.height)) {
+                    scroll.smoothScrollTo(0, card.top)
+                }
+            }
+        }
+        layoutParams = android.widget.FrameLayout.LayoutParams(dp(36), dp(36), Gravity.BOTTOM or Gravity.END)
+    }
+    if (!expanded) button.post {
+        val layout = button.layout ?: return@post
+        val cut = layout.lineCount > 0 && layout.getEllipsisCount(layout.lineCount - 1) > 0
+        toggle.visibility = if (cut) View.VISIBLE else View.GONE
+    }
+    return android.widget.FrameLayout(this).apply {
+        tag = text
+        addView(button)
+        addView(toggle)
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).also { it.marginEnd = dp(5) }
+    }
+}
+
+private const val CLIPBOARD_COLLAPSED_LINES = 3
+private const val CLIPBOARD_EXPANDED_MAX_LINES = 40
 
 internal fun NboardImeService.showClipboardItemActionsPopup(
     anchor: View,
